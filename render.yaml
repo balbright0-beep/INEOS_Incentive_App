@@ -1,0 +1,24 @@
+databases:
+  - name: ineos-incentive-db
+    plan: free
+    databaseName: incentive_db
+
+services:
+  - type: web
+    name: ineos-incentive-dashboard
+    runtime: python
+    buildCommand: pip install -r backend/requirements.txt && pip install psycopg2-binary
+    startCommand: uvicorn backend.app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ineos-incentive-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: OUTPUT_DIR
+        value: /tmp/output
+      - key: ADMIN_DEFAULT_PASSWORD
+        value: admin123

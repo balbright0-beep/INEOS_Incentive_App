@@ -1,0 +1,352 @@
+"""
+Combinatorial Campaign Code Matrix Engine.
+
+This is the CORE of the IMS. It generates the full campaign code matrix
+by enumerating all valid deal configurations and computing composite
+incentive amounts from active programs + stacking rules.
+
+ONE CODE = ONE COMPLETE DEAL CONFIGURATION.
+"""
+
+from itertools import product as iterproduct
+from decimal import Decimal
+from sqlalchemy.orm import Session
+from app.models.program import Program, ProgramRule
+from app.models.campaign_code import CampaignCode, CampaignCodeLayer
+from app.models.dealer import Product
+from app.services.stacking import get_stacking_matrix, is_program_applicable
+
+
+# --- Code naming convention (6-character max, matching production) ---
+#
+# ONE code per deal at SAP handover. Max 6 characters.
+# The code encodes: country + body/deal + MY variant + loyalty/conquest overlays
+#
+# Production examples:
+#   CASH:  USSW, USSWL, USFNF, USFNFL, USQM, USQML, USFNQM, USFNQL
+#   MY26:  USSWD, USSWLD, USFND, USFNFD, USQMD, USQMLD, USFNQD, USFDQL
+#   APR:   USAPSW, USAPSL, USASFN, USALNS, USAPQM, USAPQL, USAQFN, USALNQ
+#   LEASE: USLESW, USLESL, USLFNS, USLLNS, USLEEL, USLLEL
+#   OTHER: USARDC, USARDL, USCVP, USDEMO
+
+MAX_CODE_LEN = 6
+
+
+def generate_code_string(body_style: str, model_year: str, deal_type: str,
+                         loyalty: bool, conquest: bool, special: str | None) -> str:
+    """Generate a campaign code string. Strict 6-character limit."""
+
+    is_qm = body_style == "quartermaster"
+    is_my26_plus = model_year and model_year >= "MY26"
+    body_short = "QM" if is_qm else "SW"
+    body_initial = "Q" if is_qm else "S"  # Single char for tight codes
+    d = "D" if is_my26_plus else ""        # MY26+ suffix
+
+    # ── Special editions (Arcane Works, Iceland Tactical) ──
+    if special:
+        sp_map = {"arcane_works_detour": "ARD", "iceland_tactical": "ICE"}
+        sp = sp_map.get(special, special[:3].upper())
+        base = f"US{sp}"  # 5 chars
+        if loyalty:
+            return f"{base}L"[:MAX_CODE_LEN]  # USARDL, USICEL
+        return f"{base}C"[:MAX_CODE_LEN]      # USARDC, USICEC
+
+    # ── CVP ──
+    if deal_type == "cvp":
+        return "USCVP"
+
+    # ── Demonstrator ──
+    if deal_type == "demo":
+        return "USDEMO"
+
+    # ── Cash deals ──
+    if deal_type == "cash":
+        if conquest and loyalty:
+            # USFNFL (SW MY25), USFNQL (QM MY25), USFNFD (SW MY26), USFDQL (QM MY26)
+            if is_qm:
+                return f"USFD{body_initial}L" if d else f"USFN{body_initial}L"
+            return f"USFNF{d}" if d else "USFNFL"
+        if conquest:
+            # USFNF (SW MY25), USFNQM (QM MY25), USFND (SW MY26), USFNQD (QM MY26)
+            if is_qm:
+                return f"USFN{body_initial}{d}" if d else f"USFN{body_short}"
+            return f"USFN{d}F" if d else "USFNF"
+        if loyalty:
+            # USSWL (SW MY25), USQML (QM MY25), USSWLD (SW MY26), USQMLD (QM MY26)
+            return f"US{body_short}L{d}"
+        # Base: USSW, USQM, USSWD, USQMD
+        return f"US{body_short}{d}"
+
+    # ── APR deals ──
+    if deal_type == "apr":
+        if conquest and loyalty:
+            # USALNS (SW), USALNQ (QM)
+            return f"USALN{body_initial}"
+        if conquest:
+            # USASFN (SW), USAQFN (QM)
+            return f"USA{body_initial}FN"
+        if loyalty:
+            # USAPSL (SW), USAPQL (QM)
+            return f"USAP{body_initial}L"
+        # Base: USAPSW, USAPQM
+        return f"USAP{body_short}"
+
+    # ── Lease deals ──
+    if deal_type == "lease":
+        if conquest and loyalty:
+            # USLLNS (SW), USLLNQ (QM)
+            return f"USLLN{body_initial}"
+        if conquest:
+            # USLFNS (SW), USLFNQ (QM)
+            return f"USLFN{body_initial}"
+        if loyalty:
+            # USLESL (SW), USLEQL (QM)
+            return f"USLE{body_initial}L"
+        # Base: USLESW, USLEQM
+        return f"USLE{body_short}"
+
+    # Fallback
+    return f"US{body_short}{d}"[:MAX_CODE_LEN]
+
+
+def evaluate_rule(rule: ProgramRule, config: dict) -> bool:
+    """Evaluate a single program rule against a deal configuration."""
+    rule_type = rule.rule_type
+    op = rule.operator
+    val = rule.value
+
+    config_val = config.get(rule_type)
+    if config_val is None:
+        if op in ("not_equals", "not_in"):
+            return True
+        return False
+
+    if op == "equals":
+        return str(config_val) == str(val)
+    elif op == "not_equals":
+        return str(config_val) != str(val)
+    elif op == "in":
+        if isinstance(val, list):
+            return str(config_val) in [str(v) for v in val]
+        return str(config_val) == str(val)
+    elif op == "not_in":
+        if isinstance(val, list):
+            return str(config_val) not in [str(v) for v in val]
+        return str(config_val) != str(val)
+    elif op == "gte":
+        try:
+            return float(config_val) >= float(val)
+        except (ValueError, TypeError):
+            return False
+    elif op == "lte":
+        try:
+            return float(config_val) <= float(val)
+        except (ValueError, TypeError):
+            return False
+    elif op == "between":
+        try:
+            v = float(config_val)
+            return float(val.get("min", 0)) <= v <= float(val.get("max", 999999))
+        except (ValueError, TypeError, AttributeError):
+            return False
+    return False
+
+
+def program_matches_config(program: Program, config: dict) -> bool:
+    """Check if all rules of a program match the deal configuration (AND logic)."""
+    for rule in program.rules:
+        if not evaluate_rule(rule, config):
+            return False
+    return True
+
+
+def build_configuration_space(db: Session) -> list[dict]:
+    """Enumerate all valid deal configurations from the product catalog."""
+    products = db.query(Product).filter(Product.active == True).all()
+
+    body_styles = set()
+    model_years = set()
+    trims = set()
+    specials = set()
+
+    for p in products:
+        body_styles.add(p.body_style)
+        model_years.add(p.model_year)
+        trims.add(p.trim)
+        if p.special_edition:
+            specials.add(p.special_edition)
+
+    if not body_styles:
+        body_styles = {"station_wagon", "quartermaster"}
+    if not model_years:
+        model_years = {"MY25", "MY26"}
+
+    deal_types = ["cash", "apr", "lease", "cvp", "demo"]
+    loyalty_flags = [False, True]
+    conquest_flags = [False, True]
+    special_list = [None] + list(specials)
+
+    configs = []
+    for body, my, dt, loy, conq, sp in iterproduct(
+        sorted(body_styles), sorted(model_years), deal_types,
+        loyalty_flags, conquest_flags, special_list
+    ):
+        # CVP and Demo don't have loyalty+conquest combos in most cases
+        if dt in ("cvp", "demo") and (loy or conq):
+            continue
+        configs.append({
+            "body_style": body,
+            "model_year": my,
+            "finance_type": dt,
+            "loyalty": loy,
+            "conquest": conq,
+            "special_edition": sp,
+        })
+    return configs
+
+
+def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
+    """
+    Rebuild the entire campaign code matrix from active programs + stacking rules.
+    Returns list of matrix diff items.
+    """
+    active_programs = db.query(Program).filter(
+        Program.status == "active"
+    ).all()
+
+    stacking = get_stacking_matrix(db)
+    configs = build_configuration_space(db)
+
+    # Get existing codes for diff
+    existing_codes = {}
+    for code in db.query(CampaignCode).all():
+        existing_codes[code.code] = code
+
+    new_matrix = []
+
+    for config in configs:
+        deal_type = config["finance_type"]
+        matching_layers = []
+
+        for prog in active_programs:
+            if not is_program_applicable(deal_type, prog.program_type, stacking):
+                continue
+            if not program_matches_config(prog, config):
+                continue
+            # Loyalty/conquest program types only apply if the flag is set
+            if prog.program_type == "loyalty" and not config["loyalty"]:
+                continue
+            if prog.program_type == "conquest" and not config["conquest"]:
+                continue
+            matching_layers.append({
+                "program_id": prog.id,
+                "program_name": prog.name,
+                "program_type": prog.program_type,
+                "amount": float(prog.per_unit_amount or 0),
+            })
+
+        total_amount = sum(l["amount"] for l in matching_layers)
+
+        # Skip $0 configs unless they serve tracking purposes
+        if total_amount == 0 and deal_type not in ("demo", "apr", "lease"):
+            continue
+
+        code_str = generate_code_string(
+            config["body_style"], config["model_year"], deal_type,
+            config["loyalty"], config["conquest"], config.get("special_edition")
+        )
+
+        # Determine change type
+        existing = existing_codes.get(code_str)
+        if existing:
+            current_amt = float(existing.support_amount or 0)
+            if abs(current_amt - total_amount) < 0.01:
+                change_type = "unchanged"
+            else:
+                change_type = "changed"
+        else:
+            change_type = "new"
+            current_amt = None
+
+        # Build label
+        parts = []
+        if config.get("special_edition"):
+            parts.append(config["special_edition"].replace("_", " ").title())
+        parts.append(config["model_year"])
+        parts.append(config["body_style"].replace("_", " ").title())
+        parts.append(deal_type.upper())
+        if config["loyalty"]:
+            parts.append("+ Loyalty")
+        if config["conquest"]:
+            parts.append("+ Conquest")
+        label = " ".join(parts)
+
+        new_matrix.append({
+            "code": code_str,
+            "label": label,
+            "model_year": config["model_year"],
+            "body_style": config["body_style"],
+            "deal_type": deal_type,
+            "loyalty_flag": config["loyalty"],
+            "conquest_flag": config["conquest"],
+            "special_flag": config.get("special_edition"),
+            "current_amount": current_amt,
+            "new_amount": total_amount,
+            "change_type": change_type,
+            "layers": matching_layers,
+            "effective_date": None,
+            "expiration_date": None,
+        })
+
+    if preview_only:
+        return new_matrix
+
+    # Apply: delete old codes and create new ones
+    db.query(CampaignCodeLayer).delete()
+    db.query(CampaignCode).delete()
+
+    seen_codes = {}
+    for item in new_matrix:
+        code_str = item["code"][:6]  # Enforce 6-char max
+        if code_str in seen_codes:
+            # Duplicate code = same deal configuration already covered. Skip it.
+            # This happens when multiple special editions map to the same code pattern.
+            continue
+        seen_codes[code_str] = item
+
+        # Get date range from contributing programs
+        eff_date = None
+        exp_date = None
+        for prog in active_programs:
+            if any(l["program_id"] == prog.id for l in item["layers"]):
+                if eff_date is None or prog.effective_date < eff_date:
+                    eff_date = prog.effective_date
+                if exp_date is None or prog.expiration_date > exp_date:
+                    exp_date = prog.expiration_date
+
+        cc = CampaignCode(
+            code=code_str,
+            label=item["label"],
+            support_amount=Decimal(str(item["new_amount"])),
+            model_year=item["model_year"],
+            body_style=item["body_style"],
+            deal_type=item["deal_type"],
+            loyalty_flag=item["loyalty_flag"],
+            conquest_flag=item["conquest_flag"],
+            special_flag=item.get("special_flag"),
+            active=True,
+            effective_date=eff_date,
+            expiration_date=exp_date,
+        )
+        db.add(cc)
+        db.flush()
+
+        for layer in item["layers"]:
+            db.add(CampaignCodeLayer(
+                campaign_code_id=cc.id,
+                program_id=layer["program_id"],
+                layer_amount=Decimal(str(layer["amount"])),
+            ))
+
+    db.commit()
+    return new_matrix

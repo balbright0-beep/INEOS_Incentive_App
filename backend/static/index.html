@@ -1,0 +1,2016 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>INEOS IMS — Incentive Management System</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'flare-red': '#FF4639',
+            'onyx': '#1D1D1D',
+            'charcoal': '#171717',
+            'mushroom': '#D9D7D0',
+            'mushroom-light': '#FAFAF9',
+            'dove': '#E9E8E5',
+            'iron-smoke': '#606060',
+            'silver-dust': '#9F9F9F',
+            'success': '#2C931E',
+            'error': '#CC0200',
+          }
+        }
+      }
+    }
+  </script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    body { background: #FAFAF9; margin: 0; }
+    .scrollbar-thin::-webkit-scrollbar { width: 6px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #D9D7D0; border-radius: 3px; }
+    .toast { animation: slideIn 0.3s ease-out; }
+    @keyframes slideIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-type="module">
+    // ==================== API Client ====================
+    const API = {
+      token: localStorage.getItem('ims_token'),
+
+      async request(method, path, body) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        const opts = { method, headers, credentials: 'include' };
+        if (body) opts.body = JSON.stringify(body);
+        const res = await fetch(`/api${path}`, opts);
+        if (res.status === 401) {
+          this.token = null;
+          localStorage.removeItem('ims_token');
+          window.location.reload();
+          throw new Error('Unauthorized');
+        }
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ detail: 'Request failed' }));
+          throw new Error(err.detail || 'Request failed');
+        }
+        if (res.headers.get('content-type')?.includes('json')) return res.json();
+        return res;
+      },
+
+      get: (path) => API.request('GET', path),
+      post: (path, body) => API.request('POST', path, body),
+      put: (path, body) => API.request('PUT', path, body),
+      del: (path) => API.request('DELETE', path),
+
+      async upload(path, file) {
+        const form = new FormData();
+        form.append('file', file);
+        const headers = {};
+        if (this.token) headers['Authorization'] = `Bearer ${this.token}`;
+        const res = await fetch(`/api${path}`, { method: 'POST', headers, body: form, credentials: 'include' });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Upload failed'); }
+        return res.json();
+      },
+
+      setToken(t) { this.token = t; localStorage.setItem('ims_token', t); },
+      clearToken() { this.token = null; localStorage.removeItem('ims_token'); },
+    };
+
+    // ==================== Context ====================
+    const AuthContext = React.createContext(null);
+    const ToastContext = React.createContext(null);
+
+    // ==================== Shared Components ====================
+    function Badge({ children, variant = 'default', className = '' }) {
+      const styles = {
+        active: 'bg-success/10 text-success',
+        draft: 'bg-mushroom text-iron-smoke',
+        expired: 'bg-flare-red/10 text-flare-red',
+        cancelled: 'bg-error/10 text-error',
+        pending: 'bg-yellow-100 text-yellow-700',
+        submitted: 'bg-blue-100 text-blue-700',
+        paid: 'bg-success/10 text-success',
+        rejected: 'bg-error/10 text-error',
+        default: 'bg-mushroom text-iron-smoke',
+      };
+      return <span className={`px-2 py-0.5 rounded-full text-xs font-medium uppercase ${styles[variant] || styles.default} ${className}`}>{children}</span>;
+    }
+
+    function Button({ children, onClick, variant = 'primary', size = 'md', disabled, className = '', type = 'button' }) {
+      const base = 'rounded font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-offset-1';
+      const variants = {
+        primary: 'bg-flare-red text-white hover:bg-red-600 focus:ring-flare-red',
+        secondary: 'bg-onyx text-white hover:bg-charcoal focus:ring-onyx',
+        outline: 'border border-mushroom text-onyx hover:bg-dove focus:ring-mushroom',
+        ghost: 'text-iron-smoke hover:bg-dove focus:ring-mushroom',
+        danger: 'bg-error text-white hover:bg-red-800 focus:ring-error',
+      };
+      const sizes = { sm: 'px-3 py-1.5 text-sm', md: 'px-4 py-2 text-sm', lg: 'px-6 py-3 text-base' };
+      return (
+        <button type={type} onClick={onClick} disabled={disabled}
+          className={`${base} ${variants[variant]} ${sizes[size]} ${disabled ? 'opacity-50 cursor-not-allowed' : ''} ${className}`}>
+          {children}
+        </button>
+      );
+    }
+
+    function Card({ children, className = '', onClick }) {
+      return <div onClick={onClick} className={`bg-white rounded-lg border border-dove shadow-sm ${onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : ''} ${className}`}>{children}</div>;
+    }
+
+    function Input({ label, error, className = '', ...props }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-onyx mb-1">{label}</label>}
+          <input {...props} className={`w-full px-3 py-2 border rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-flare-red/50 ${error ? 'border-error' : 'border-mushroom'}`} />
+          {error && <p className="text-error text-xs mt-1">{error}</p>}
+        </div>
+      );
+    }
+
+    function Select({ label, options, className = '', ...props }) {
+      return (
+        <div className={className}>
+          {label && <label className="block text-sm font-medium text-onyx mb-1">{label}</label>}
+          <select {...props} className="w-full px-3 py-2 border border-mushroom rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-flare-red/50 bg-white">
+            {options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+      );
+    }
+
+    function Modal({ open, onClose, title, children, wide }) {
+      if (!open) return null;
+      return (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 fade-in" onClick={onClose}>
+          <div className={`bg-white rounded-lg shadow-xl ${wide ? 'max-w-4xl' : 'max-w-lg'} w-full mx-4 max-h-[85vh] overflow-auto`} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-dove">
+              <h2 className="text-lg font-semibold text-onyx">{title}</h2>
+              <button onClick={onClose} className="text-silver-dust hover:text-onyx text-xl">&times;</button>
+            </div>
+            <div className="px-6 py-4">{children}</div>
+          </div>
+        </div>
+      );
+    }
+
+    function Spinner() {
+      return <div className="flex justify-center py-8"><div className="w-8 h-8 border-4 border-mushroom border-t-flare-red rounded-full animate-spin"></div></div>;
+    }
+
+    function EmptyState({ message, icon = '📋' }) {
+      return <div className="text-center py-12 text-silver-dust"><span className="text-4xl block mb-2">{icon}</span><p>{message}</p></div>;
+    }
+
+    function Toast({ message, type = 'success', onClose }) {
+      React.useEffect(() => { const t = setTimeout(onClose, 4000); return () => clearTimeout(t); }, []);
+      const bg = type === 'error' ? 'bg-error' : type === 'warning' ? 'bg-yellow-500' : 'bg-success';
+      return (
+        <div className={`toast fixed top-4 right-4 z-50 ${bg} text-white px-4 py-3 rounded-lg shadow-lg flex items-center gap-2`}>
+          <span className="text-sm">{message}</span>
+          <button onClick={onClose} className="text-white/80 hover:text-white">&times;</button>
+        </div>
+      );
+    }
+
+    function DataTable({ columns, data, onRowClick }) {
+      if (!data?.length) return <EmptyState message="No data available" />;
+      return (
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-dove">
+                {columns.map(col => (
+                  <th key={col.key} className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase tracking-wider">{col.label}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.map((row, i) => (
+                <tr key={row.id || i} onClick={() => onRowClick?.(row)}
+                  className={`border-b border-dove/50 hover:bg-dove/30 transition-colors ${onRowClick ? 'cursor-pointer' : ''}`}>
+                  {columns.map(col => (
+                    <td key={col.key} className="px-4 py-3 text-sm text-onyx">
+                      {col.render ? col.render(row[col.key], row) : row[col.key]}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+
+    // ==================== Login Page ====================
+    function LoginPage({ onLogin }) {
+      const [username, setUsername] = React.useState('');
+      const [password, setPassword] = React.useState('');
+      const [error, setError] = React.useState('');
+      const [loading, setLoading] = React.useState(false);
+
+      async function handleSubmit(e) {
+        e.preventDefault();
+        setLoading(true); setError('');
+        try {
+          const res = await API.post('/auth/login', { username, password });
+          API.setToken(res.access_token);
+          onLogin(res.user);
+        } catch (err) {
+          setError(err.message);
+        } finally { setLoading(false); }
+      }
+
+      return (
+        <div className="min-h-screen flex items-center justify-center bg-charcoal">
+          <div className="w-full max-w-md">
+            <div className="text-center mb-8">
+              <div className="flex items-center justify-center gap-3 mb-2">
+                <div className="w-1 h-8 bg-flare-red rounded"></div>
+                <h1 className="text-3xl font-bold text-white tracking-tight">INEOS GRENADIER</h1>
+              </div>
+              <p className="text-silver-dust text-sm mt-1">Incentive Management System</p>
+            </div>
+            <Card className="p-8">
+              <form onSubmit={handleSubmit}>
+                <Input label="Username" value={username} onChange={e => setUsername(e.target.value)} className="mb-4" placeholder="Enter username" />
+                <Input label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} className="mb-6" placeholder="Enter password" />
+                {error && <p className="text-error text-sm mb-4">{error}</p>}
+                <Button type="submit" disabled={loading} className="w-full" variant="secondary">
+                  {loading ? 'Signing in...' : 'Sign In'}
+                </Button>
+              </form>
+              <div className="mt-6 pt-4 border-t border-dove">
+                <p className="text-xs text-silver-dust text-center">Demo accounts: admin/admin123 &middot; darren/rbm123 &middot; dealer_1004001/dealer123</p>
+              </div>
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    // ==================== Sidebar & Layout ====================
+    function Sidebar({ user, currentPage, onNavigate, onLogout }) {
+      const adminNav = [
+        { id: 'dashboard', label: 'Dashboard', icon: '◈' },
+        { id: 'programs', label: 'Programs', icon: '◉' },
+        { id: 'codes', label: 'Code Matrix', icon: '⊞' },
+        { id: 'lookup', label: 'Incentive Lookup', icon: '⊕' },
+        { id: 'transactions', label: 'Transactions', icon: '⊡' },
+        { id: 'payfiles', label: 'Pay Files', icon: '⊟' },
+        { id: 'settings', label: 'Settings', icon: '⊛' },
+      ];
+      const rbmNav = [
+        { id: 'dashboard', label: 'Dashboard', icon: '◈' },
+        { id: 'programs', label: 'Programs', icon: '◉' },
+        { id: 'lookup', label: 'Incentive Lookup', icon: '⊕' },
+      ];
+      const retailerNav = [
+        { id: 'lookup', label: 'Incentive Lookup', icon: '⊕' },
+        { id: 'transactions', label: 'My Transactions', icon: '⊡' },
+        { id: 'programs', label: 'Program Library', icon: '◉' },
+      ];
+      const nav = user.role === 'admin' ? adminNav : user.role === 'rbm' ? rbmNav : retailerNav;
+
+      return (
+        <aside className="w-60 bg-onyx min-h-screen flex flex-col flex-shrink-0">
+          <div className="px-5 py-5 border-b border-white/10">
+            <div className="flex items-center gap-2">
+              <div className="w-1 h-6 bg-flare-red rounded"></div>
+              <span className="text-white font-bold text-sm tracking-wide">INEOS GRENADIER</span>
+            </div>
+            <p className="text-silver-dust text-xs mt-1 pl-3">Incentive Management</p>
+          </div>
+          <nav className="flex-1 py-4 px-3">
+            {nav.map(item => (
+              <button key={item.id} onClick={() => onNavigate(item.id)}
+                className={`w-full text-left px-3 py-2.5 rounded-md text-sm flex items-center gap-3 mb-1 transition-colors ${
+                  currentPage === item.id ? 'bg-white/10 text-white' : 'text-silver-dust hover:text-white hover:bg-white/5'
+                }`}>
+                <span className="text-base">{item.icon}</span>
+                {item.label}
+              </button>
+            ))}
+          </nav>
+          <div className="px-4 py-4 border-t border-white/10">
+            <div className="flex items-center gap-3 mb-3">
+              <div className="w-8 h-8 rounded-full bg-flare-red/20 flex items-center justify-center text-flare-red text-sm font-bold">
+                {user.name?.[0] || 'U'}
+              </div>
+              <div>
+                <p className="text-white text-sm font-medium">{user.name}</p>
+                <p className="text-silver-dust text-xs capitalize">{user.role}{user.region ? ` · ${user.region}` : ''}</p>
+              </div>
+            </div>
+            <button onClick={onLogout} className="text-silver-dust hover:text-white text-sm transition-colors">Sign Out</button>
+          </div>
+        </aside>
+      );
+    }
+
+    // ==================== Dashboard Page ====================
+    function DashboardPage() {
+      const [summary, setSummary] = React.useState(null);
+      const [byProgram, setByProgram] = React.useState([]);
+      const [byRegion, setByRegion] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+
+      React.useEffect(() => {
+        Promise.all([
+          API.get('/dashboard/spend-summary'),
+          API.get('/dashboard/spend-by-program'),
+          API.get('/dashboard/spend-by-region'),
+        ]).then(([s, p, r]) => { setSummary(s); setByProgram(p); setByRegion(r); })
+          .finally(() => setLoading(false));
+      }, []);
+
+      if (loading) return <Spinner />;
+      const s = summary || {};
+
+      return (
+        <div className="fade-in">
+          <h1 className="text-2xl font-bold text-onyx mb-6">Dashboard</h1>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+            <StatCard title="Spend MTD" value={`$${(s.total_spend_mtd||0).toLocaleString()}`} subtitle={`${s.utilization_pct||0}% of budget`} accent />
+            <StatCard title="Total Budget" value={`$${(s.total_budget||0).toLocaleString()}`} subtitle={`Period: ${s.period||''}`} />
+            <StatCard title="Units MTD" value={s.total_units_mtd||0} subtitle={`Avg: $${(s.avg_incentive_per_unit||0).toLocaleString()}/unit`} />
+            <StatCard title="Projected EOM" value={`$${(s.projected_month_end||0).toLocaleString()}`} subtitle="Based on daily run rate" />
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card className="p-6">
+              <h3 className="text-sm font-semibold text-onyx uppercase mb-4">Spend by Program</h3>
+              {byProgram.length ? (
+                <div className="space-y-3">
+                  {byProgram.map((p, i) => (
+                    <div key={i} className="flex items-center justify-between">
+                      <div className="flex-1 mr-4">
+                        <div className="flex justify-between mb-1">
+                          <span className="text-sm text-onyx">{p.program_name}</span>
+                          <span className="text-sm font-medium">${p.spend.toLocaleString()}</span>
+                        </div>
+                        <div className="w-full bg-dove rounded-full h-2">
+                          <div className="bg-flare-red h-2 rounded-full" style={{width: `${p.budget ? Math.min(p.spend/p.budget*100,100) : 0}%`}}></div>
+                        </div>
+                      </div>
+                      <span className="text-xs text-silver-dust">{p.units} units</span>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState message="No spend data yet" />}
+            </Card>
+            <Card className="p-6">
+              <h3 className="text-sm font-semibold text-onyx uppercase mb-4">Spend by Region</h3>
+              {byRegion.length ? (
+                <div className="space-y-3">
+                  {byRegion.map((r, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-dove/50 last:border-0">
+                      <span className="text-sm font-medium capitalize">{r.region}</span>
+                      <div className="text-right">
+                        <span className="text-sm font-semibold">${r.spend.toLocaleString()}</span>
+                        <span className="text-xs text-silver-dust ml-2">({r.units} units)</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : <EmptyState message="No regional data yet" />}
+            </Card>
+          </div>
+        </div>
+      );
+    }
+
+    function StatCard({ title, value, subtitle, accent }) {
+      return (
+        <Card className="p-5">
+          <p className="text-xs font-semibold text-silver-dust uppercase tracking-wider mb-1">{title}</p>
+          <p className={`text-2xl font-bold ${accent ? 'text-flare-red' : 'text-onyx'}`}>{value}</p>
+          {subtitle && <p className="text-xs text-silver-dust mt-1">{subtitle}</p>}
+        </Card>
+      );
+    }
+
+    // ==================== Programs Page ====================
+    function ProgramsPage() {
+      const { user } = React.useContext(AuthContext);
+      const toast = React.useContext(ToastContext);
+      const [programs, setPrograms] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      const [showCreate, setShowCreate] = React.useState(false);
+      const [filter, setFilter] = React.useState('all');
+
+      const load = () => API.get('/programs').then(setPrograms).finally(() => setLoading(false));
+      React.useEffect(() => { load(); }, []);
+
+      const filtered = filter === 'all' ? programs : programs.filter(p => p.status === filter);
+
+      async function handleActivate(id) {
+        try {
+          const res = await API.post(`/programs/${id}/activate`);
+          toast.show(`Program activated. ${res.codes_generated} codes generated.`);
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      async function handleClone(id) {
+        try {
+          await API.post(`/programs/${id}/clone`);
+          toast.show('Program cloned');
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      async function handleDelete(id, name) {
+        if (!confirm(`Delete program "${name}"? This cannot be undone.`)) return;
+        try {
+          const headers = {};
+          if (API.token) headers['Authorization'] = `Bearer ${API.token}`;
+          const res = await fetch(`/api/programs/${id}`, { method: 'DELETE', headers });
+          if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.detail || 'Delete failed'); }
+          toast.show('Program deleted');
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      if (loading) return <Spinner />;
+
+      return (
+        <div className="fade-in">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold text-onyx">Programs</h1>
+            {user.role === 'admin' && <Button onClick={() => setShowCreate(true)}>+ New Program</Button>}
+          </div>
+          <div className="flex gap-2 mb-4">
+            {['all', 'active', 'draft', 'expired'].map(s => (
+              <button key={s} onClick={() => setFilter(s)}
+                className={`px-3 py-1.5 rounded-full text-sm capitalize ${filter === s ? 'bg-onyx text-white' : 'bg-dove text-iron-smoke hover:bg-mushroom'}`}>
+                {s} {s !== 'all' && `(${programs.filter(p => p.status === s).length})`}
+              </button>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {filtered.map(p => (
+              <Card key={p.id} className="p-5">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <h3 className="font-semibold text-onyx text-sm">{p.name}</h3>
+                    <Badge variant={p.status} className="mt-1">{p.status}</Badge>
+                  </div>
+                  <Badge variant="default">{p.program_type.replace('_', ' ')}</Badge>
+                </div>
+                <div className="text-xs text-silver-dust space-y-1 mb-3">
+                  <p>{p.effective_date} → {p.expiration_date}</p>
+                  <p>Per unit: ${p.per_unit_amount?.toLocaleString() || 0}</p>
+                  {p.budget_amount && (
+                    <div>
+                      <div className="flex justify-between"><span>Budget</span><span>${p.spend_to_date?.toLocaleString() || 0} / ${p.budget_amount.toLocaleString()}</span></div>
+                      <div className="w-full bg-dove rounded-full h-1.5 mt-1">
+                        <div className="bg-flare-red h-1.5 rounded-full" style={{width: `${Math.min((p.spend_to_date||0)/p.budget_amount*100,100)}%`}}></div>
+                      </div>
+                    </div>
+                  )}
+                  <p>{p.units_to_date || 0} units claimed</p>
+                </div>
+                {user.role === 'admin' && (
+                  <div className="flex gap-2 pt-3 border-t border-dove">
+                    {p.status === 'draft' && <Button size="sm" onClick={() => handleActivate(p.id)}>Activate</Button>}
+                    <Button size="sm" variant="outline" onClick={() => handleClone(p.id)}>Clone</Button>
+                    <Button size="sm" variant="ghost" onClick={() => window.open(`/api/settings/bulletin/${p.id}`, '_blank')}>PDF</Button>
+                    <Button size="sm" variant="ghost" onClick={() => handleDelete(p.id, p.name)} className="text-error/60 hover:text-error">Delete</Button>
+                  </div>
+                )}
+              </Card>
+            ))}
+          </div>
+          {showCreate && <ProgramCreateModal onClose={() => { setShowCreate(false); load(); }} />}
+        </div>
+      );
+    }
+
+    // Checkbox group component for multi-select
+    function CheckboxGroup({ label, options, selected, onChange, columns = 2 }) {
+      const toggle = (val) => {
+        const next = selected.includes(val) ? selected.filter(v => v !== val) : [...selected, val];
+        onChange(next);
+      };
+      return (
+        <div>
+          <label className="block text-sm font-medium text-onyx mb-2">{label}</label>
+          <div className={`grid grid-cols-${columns} gap-1`}>
+            {options.map(opt => (
+              <label key={opt.value} className={`flex items-center gap-2 px-3 py-2 rounded cursor-pointer text-sm transition-colors ${
+                selected.includes(opt.value) ? 'bg-flare-red/10 text-onyx border border-flare-red/30' : 'bg-mushroom-light text-iron-smoke border border-transparent hover:bg-dove'
+              }`}>
+                <input type="checkbox" checked={selected.includes(opt.value)} onChange={() => toggle(opt.value)}
+                  className="w-3.5 h-3.5 rounded border-mushroom text-flare-red focus:ring-flare-red" />
+                {opt.label}
+              </label>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function ProgramCreateModal({ onClose }) {
+      const toast = React.useContext(ToastContext);
+      const [step, setStep] = React.useState(1);
+      const [form, setForm] = React.useState({
+        name: '', program_type: 'customer_cash', effective_date: '2026-04-01', expiration_date: '2026-04-30',
+        description: '', budget_amount: '', per_unit_amount: '',
+        // Eligibility selections (converted to rules on save)
+        body_styles: ['station_wagon', 'quartermaster'],
+        model_years: ['MY25', 'MY26'],
+        trims: [],
+        finance_types: [],
+        regions: [],
+        states: [],
+        special_editions: [],
+        // Stacking (auto-populated from type, admin can override)
+        stackable_with: ['loyalty','conquest','friends_family','santander_standard'],
+        not_stackable_with: ['lease_subvention','apr_subvention','cvp'],
+      });
+      const [saving, setSaving] = React.useState(false);
+
+      const update = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+      // Auto-populate stacking when program type changes
+      const STACKING_DEFAULTS = {
+        customer_cash: { stackable: ['loyalty','conquest','friends_family','santander_standard'], not_stackable: ['lease_subvention','apr_subvention','cvp'] },
+        bonus_cash: { stackable: ['customer_cash','apr_cash','lease_cash','loyalty','conquest','tactical'], not_stackable: [] },
+        apr_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_apr'], not_stackable: ['customer_cash','lease_subvention','cvp'] },
+        lease_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_lease'], not_stackable: ['customer_cash','apr_subvention','cvp'] },
+        loyalty: { stackable: ['customer_cash','apr_cash','lease_cash','conquest','friends_family','bonus_cash','costco','dealer_employee'], not_stackable: [] },
+        conquest: { stackable: ['customer_cash','loyalty','santander_apr','bonus_cash'], not_stackable: ['cvp'] },
+        cvp: { stackable: ['santander_cpo'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest'] },
+        demonstrator: { stackable: ['bonus_cash'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest','cvp'] },
+        tactical: { stackable: [], not_stackable: [] },
+        other: { stackable: [], not_stackable: [] },
+      };
+
+      const prevTypeRef = React.useRef(form.program_type);
+      React.useEffect(() => {
+        if (prevTypeRef.current !== form.program_type) {
+          prevTypeRef.current = form.program_type;
+          const defaults = STACKING_DEFAULTS[form.program_type] || { stackable: [], not_stackable: [] };
+          setForm(f => ({ ...f, stackable_with: defaults.stackable, not_stackable_with: defaults.not_stackable }));
+        }
+      });
+
+      // Convert form selections to API rules format
+      function buildRules() {
+        const rules = [];
+        if (form.body_styles.length > 0 && form.body_styles.length < 2) {
+          rules.push({ rule_type: 'body_style', operator: 'in', value: form.body_styles });
+        } else if (form.body_styles.length === 2) {
+          rules.push({ rule_type: 'body_style', operator: 'in', value: form.body_styles });
+        }
+        if (form.model_years.length > 0) {
+          rules.push({ rule_type: 'model_year', operator: 'in', value: form.model_years });
+        }
+        if (form.trims.length > 0) {
+          rules.push({ rule_type: 'trim', operator: 'in', value: form.trims });
+        }
+        if (form.finance_types.length > 0) {
+          rules.push({ rule_type: 'finance_type', operator: 'in', value: form.finance_types });
+        }
+        if (form.regions.length > 0) {
+          rules.push({ rule_type: 'region', operator: 'in', value: form.regions });
+        }
+        if (form.states.length > 0) {
+          rules.push({ rule_type: 'state', operator: 'in', value: form.states });
+        }
+        if (form.special_editions.length > 0) {
+          rules.push({ rule_type: 'special_edition', operator: 'in', value: form.special_editions });
+        }
+        return rules;
+      }
+
+      async function handleSave() {
+        setSaving(true);
+        try {
+          const payload = {
+            name: form.name,
+            program_type: form.program_type,
+            effective_date: form.effective_date,
+            expiration_date: form.expiration_date,
+            description: form.description,
+            budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : null,
+            per_unit_amount: form.per_unit_amount ? parseFloat(form.per_unit_amount) : 0,
+            rules: buildRules(),
+          };
+          await API.post('/programs', payload);
+          toast.show('Program created');
+          onClose();
+        } catch (e) { toast.show(e.message, 'error'); }
+        finally { setSaving(false); }
+      }
+
+      const typeOptions = [
+        { value: 'customer_cash', label: 'Customer Cash' },
+        { value: 'bonus_cash', label: 'Bonus Cash' },
+        { value: 'apr_cash', label: 'APR Cash' },
+        { value: 'lease_cash', label: 'Lease Cash' },
+        { value: 'cvp', label: 'CVP (Courtesy Vehicle)' },
+        { value: 'demonstrator', label: 'Demonstrator' },
+        { value: 'loyalty', label: 'Loyalty Rebate' },
+        { value: 'conquest', label: 'Conquest (Built for Purpose)' },
+        { value: 'tactical', label: 'Tactical / Special' },
+        { value: 'other', label: 'Other' },
+      ];
+
+      const bodyStyleOptions = [
+        { value: 'station_wagon', label: 'Station Wagon' },
+        { value: 'quartermaster', label: 'Quartermaster' },
+      ];
+
+      const modelYearOptions = [
+        { value: 'MY25', label: '2025 (MY25)' },
+        { value: 'MY26', label: '2026 (MY26)' },
+        { value: 'MY27', label: '2027 (MY27)' },
+      ];
+
+      const trimOptions = [
+        { value: 'Base', label: 'Base' },
+        { value: 'Fieldmaster', label: 'Fieldmaster' },
+        { value: 'Belstaff', label: 'Belstaff' },
+        { value: 'Trialmaster', label: 'Trialmaster' },
+        { value: 'Highlands', label: 'Highlands' },
+        { value: 'Arcane Works Detour', label: 'Arcane Works Detour' },
+      ];
+
+      const financeOptions = [
+        { value: 'cash', label: 'Cash' },
+        { value: 'apr', label: 'APR / Retail Finance' },
+        { value: 'lease', label: 'Lease' },
+      ];
+
+      const regionOptions = [
+        { value: 'northeast', label: 'Northeast' },
+        { value: 'southeast', label: 'Southeast' },
+        { value: 'central', label: 'Central' },
+        { value: 'western', label: 'Western' },
+      ];
+
+      const specialOptions = [
+        { value: 'arcane_works_detour', label: 'Arcane Works Detour' },
+        { value: 'iceland_tactical', label: 'Iceland Tactical' },
+      ];
+
+      const stackableOptions = [
+        { value: 'customer_cash', label: 'Customer Cash' },
+        { value: 'bonus_cash', label: 'Bonus Cash' },
+        { value: 'apr_cash', label: 'APR Cash' },
+        { value: 'lease_cash', label: 'Lease Cash' },
+        { value: 'loyalty', label: 'Loyalty' },
+        { value: 'conquest', label: 'Conquest' },
+        { value: 'friends_family', label: 'Friends & Family' },
+        { value: 'santander_standard', label: 'Santander Standard' },
+        { value: 'santander_apr', label: 'Santander Subvented APR' },
+        { value: 'santander_lease', label: 'Santander Subvented Lease' },
+        { value: 'santander_cpo', label: 'Santander CPO/CBI' },
+        { value: 'costco', label: 'Costco' },
+        { value: 'dealer_employee', label: 'Dealer Employee Lease' },
+        { value: 'tactical', label: 'Tactical Programs' },
+      ];
+
+      const notStackableOptions = [
+        { value: 'customer_cash', label: 'Customer Cash' },
+        { value: 'apr_subvention', label: 'APR Subvention' },
+        { value: 'lease_subvention', label: 'Lease Subvention' },
+        { value: 'cvp', label: 'CVP' },
+        { value: 'conquest', label: 'Conquest' },
+        { value: 'demonstrator', label: 'Demonstrator' },
+      ];
+
+      // Build summary text from selections
+      const summaryParts = [];
+      if (form.model_years.length > 0) summaryParts.push(form.model_years.join(' & '));
+      if (form.body_styles.length > 0) summaryParts.push(form.body_styles.map(b => b.replace('_',' ').replace(/\b\w/g, c => c.toUpperCase())).join(' & '));
+      if (form.trims.length > 0) summaryParts.push(form.trims.join(', '));
+      if (form.finance_types.length > 0) summaryParts.push(form.finance_types.join(', ') + ' deals');
+      if (form.regions.length > 0 && form.regions.length < 4) summaryParts.push(form.regions.join(', ') + ' region(s)');
+      const summaryText = summaryParts.length > 0 ? summaryParts.join(' · ') : 'All vehicles eligible';
+
+      return (
+        <Modal open={true} onClose={onClose} title={`Create Program — Step ${step} of 4`} wide>
+          {step === 1 && (
+            <div className="space-y-4">
+              <Input label="Program Name" value={form.name} onChange={e => update('name', e.target.value)} placeholder="e.g., April 2026 Customer Cash" />
+              <Select label="Incentive Category" value={form.program_type} onChange={e => update('program_type', e.target.value)} options={typeOptions} />
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Effective Date" type="date" value={form.effective_date} onChange={e => update('effective_date', e.target.value)} />
+                <Input label="Expiration Date" type="date" value={form.expiration_date} onChange={e => update('expiration_date', e.target.value)} />
+              </div>
+              <Input label="Description" value={form.description} onChange={e => update('description', e.target.value)} placeholder="Internal notes about this program..." />
+              <div className="flex justify-end"><Button onClick={() => setStep(2)}>Next: Eligibility</Button></div>
+            </div>
+          )}
+          {step === 2 && (
+            <div className="space-y-5">
+              <h3 className="font-semibold text-onyx text-sm uppercase tracking-wider">Vehicle Eligibility</h3>
+
+              <CheckboxGroup label="Body Style" options={bodyStyleOptions} selected={form.body_styles} onChange={v => update('body_styles', v)} columns={2} />
+              <CheckboxGroup label="Model Year" options={modelYearOptions} selected={form.model_years} onChange={v => update('model_years', v)} columns={3} />
+
+              <div>
+                <label className="block text-sm font-medium text-onyx mb-2">Trims <span className="text-silver-dust font-normal">(leave empty for all trims)</span></label>
+                <CheckboxGroup label="" options={trimOptions} selected={form.trims} onChange={v => update('trims', v)} columns={3} />
+              </div>
+
+              <CheckboxGroup label="Special Editions (optional)" options={specialOptions} selected={form.special_editions} onChange={v => update('special_editions', v)} columns={2} />
+
+              <h3 className="font-semibold text-onyx text-sm uppercase tracking-wider pt-2">Deal & Region Restrictions</h3>
+
+              <div>
+                <label className="block text-sm font-medium text-onyx mb-2">Finance Types <span className="text-silver-dust font-normal">(leave empty for all types)</span></label>
+                <CheckboxGroup label="" options={financeOptions} selected={form.finance_types} onChange={v => update('finance_types', v)} columns={3} />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-onyx mb-2">Regions <span className="text-silver-dust font-normal">(leave empty for all regions)</span></label>
+                <CheckboxGroup label="" options={regionOptions} selected={form.regions} onChange={v => update('regions', v)} columns={4} />
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-sm font-medium text-onyx">State Targeting <span className="text-silver-dust font-normal">(leave empty for national)</span></label>
+                  {form.states.length > 0 && (
+                    <button type="button" onClick={() => update('states', [])} className="text-xs text-flare-red hover:underline">Clear all</button>
+                  )}
+                </div>
+                {form.states.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mb-2">
+                    {form.states.map(s => (
+                      <span key={s} className="inline-flex items-center gap-1 px-2 py-0.5 bg-flare-red/10 text-flare-red rounded text-xs font-medium">
+                        {s}
+                        <button type="button" onClick={() => update('states', form.states.filter(x => x !== s))} className="hover:text-red-800">&times;</button>
+                      </span>
+                    ))}
+                  </div>
+                )}
+                <div className="grid grid-cols-6 gap-1 max-h-36 overflow-y-auto border border-dove rounded p-2 bg-white">
+                  {['AL','AK','AZ','AR','CA','CO','CT','DE','DC','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY'].map(st => (
+                    <label key={st} className={`flex items-center justify-center py-1 rounded cursor-pointer text-xs font-medium transition-colors ${
+                      form.states.includes(st) ? 'bg-flare-red text-white' : 'bg-mushroom-light text-iron-smoke hover:bg-dove'
+                    }`}>
+                      <input type="checkbox" checked={form.states.includes(st)} onChange={() => {
+                        const next = form.states.includes(st) ? form.states.filter(x => x !== st) : [...form.states, st];
+                        update('states', next);
+                      }} className="sr-only" />
+                      {st}
+                    </label>
+                  ))}
+                </div>
+                <p className="text-xs text-silver-dust mt-1">{form.states.length === 0 ? 'National program (all states)' : `${form.states.length} state(s) selected`}</p>
+              </div>
+
+              <div className="p-3 bg-dove/50 rounded text-sm text-onyx">
+                <strong>Eligibility Summary:</strong> {summaryText}
+                {form.states.length > 0 && <span className="ml-1">| States: {form.states.join(', ')}</span>}
+              </div>
+
+              <div className="flex justify-between">
+                <Button variant="outline" onClick={() => setStep(1)}>Back</Button>
+                <Button onClick={() => setStep(3)}>Next: Stacking Rules</Button>
+              </div>
+            </div>
+          )}
+          {step === 3 && (
+            <div className="space-y-5">
+              <div className="p-3 bg-mushroom-light rounded border border-dove text-sm text-iron-smoke">
+                Stacking rules have been pre-populated based on the <strong>{form.program_type.replace('_',' ')}</strong> program type.
+                Adjust if this program has special stacking requirements.
+              </div>
+
+              <CheckboxGroup label="Stackable With" options={stackableOptions} selected={form.stackable_with} onChange={v => update('stackable_with', v)} columns={2} />
+              <CheckboxGroup label="Not Stackable With" options={notStackableOptions} selected={form.not_stackable_with} onChange={v => update('not_stackable_with', v)} columns={2} />
+
+              <div className="flex justify-between">
+                <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
+                <Button onClick={() => setStep(4)}>Next: Amounts & Review</Button>
+              </div>
+            </div>
+          )}
+          {step === 4 && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <Input label="Per-Unit Amount ($)" type="number" value={form.per_unit_amount} onChange={e => update('per_unit_amount', e.target.value)} placeholder="e.g., 5000" />
+                <Input label="Total Budget ($)" type="number" value={form.budget_amount} onChange={e => update('budget_amount', e.target.value)} placeholder="e.g., 500000" />
+              </div>
+
+              <div className="p-4 bg-mushroom-light rounded border border-dove space-y-2">
+                <h4 className="font-semibold text-sm uppercase tracking-wider text-onyx mb-3">Program Review</h4>
+                <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
+                  <p><span className="text-silver-dust">Name:</span> <strong>{form.name}</strong></p>
+                  <p><span className="text-silver-dust">Type:</span> <strong>{form.program_type.replace('_', ' ')}</strong></p>
+                  <p><span className="text-silver-dust">Period:</span> <strong>{form.effective_date} to {form.expiration_date}</strong></p>
+                  <p><span className="text-silver-dust">Per Unit:</span> <strong>${form.per_unit_amount || 0}</strong></p>
+                  <p><span className="text-silver-dust">Budget:</span> <strong>${form.budget_amount || 'No cap'}</strong></p>
+                  <p><span className="text-silver-dust">Rules:</span> <strong>{buildRules().length} eligibility rules</strong></p>
+                </div>
+                <div className="pt-2 mt-2 border-t border-dove text-sm">
+                  <p><span className="text-silver-dust">Eligible:</span> {summaryText}</p>
+                  <p className="mt-1"><span className="text-silver-dust">Stackable:</span> {form.stackable_with.length > 0 ? form.stackable_with.map(s => s.replace('_',' ')).join(', ') : 'None specified'}</p>
+                  <p className="mt-1"><span className="text-silver-dust">Not Stackable:</span> {form.not_stackable_with.length > 0 ? form.not_stackable_with.map(s => s.replace('_',' ')).join(', ') : 'None specified'}</p>
+                </div>
+              </div>
+
+              <div className="flex justify-between">
+                <Button variant="outline" onClick={() => setStep(3)}>Back</Button>
+                <Button onClick={handleSave} disabled={saving || !form.name}>
+                  {saving ? 'Creating...' : 'Create Program (Draft)'}
+                </Button>
+              </div>
+            </div>
+          )}
+        </Modal>
+      );
+    }
+
+    // ==================== Code Matrix Page ====================
+    function CodeMatrixPage() {
+      const { user } = React.useContext(AuthContext);
+      const toast = React.useContext(ToastContext);
+      const [codes, setCodes] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      const [filters, setFilters] = React.useState({ model_year: '', body_style: '', deal_type: '' });
+
+      const load = () => {
+        const params = Object.entries(filters).filter(([_, v]) => v).map(([k, v]) => `${k}=${v}`).join('&');
+        API.get(`/codes${params ? '?' + params : ''}`).then(setCodes).finally(() => setLoading(false));
+      };
+      React.useEffect(() => { load(); }, [filters]);
+
+      async function handleRebuild() {
+        try {
+          const res = await API.post('/codes/rebuild');
+          toast.show(`Matrix rebuilt: ${res.total_codes} codes`);
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      const columns = [
+        { key: 'code', label: 'Code', render: v => <span className="font-mono font-bold text-flare-red">{v}</span> },
+        { key: 'label', label: 'Description' },
+        { key: 'model_year', label: 'MY' },
+        { key: 'body_style', label: 'Body', render: v => v?.replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase()) },
+        { key: 'deal_type', label: 'Type', render: v => v?.toUpperCase() },
+        { key: 'loyalty_flag', label: 'Loy', render: v => v ? '✓' : '' },
+        { key: 'conquest_flag', label: 'Con', render: v => v ? '✓' : '' },
+        { key: 'support_amount', label: 'Amount', render: v => <span className="font-semibold">${Number(v).toLocaleString()}</span> },
+        { key: 'layers', label: 'Layers', render: (v) => v?.length ? (
+          <span className="text-xs text-silver-dust">{v.map(l => `${l.program_name}: $${l.layer_amount.toLocaleString()}`).join(' + ')}</span>
+        ) : '' },
+      ];
+
+      if (loading) return <Spinner />;
+
+      return (
+        <div className="fade-in">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold text-onyx">Campaign Code Matrix</h1>
+            <div className="flex gap-2">
+              {user.role === 'admin' && <Button onClick={handleRebuild} variant="secondary">Rebuild Matrix</Button>}
+              <Button variant="outline" onClick={() => window.open('/api/codes/export', '_blank')}>Export Excel</Button>
+              <Button variant="outline" onClick={() => window.open('/api/settings/quick-reference', '_blank')}>Quick Ref PDF</Button>
+            </div>
+          </div>
+          <Card className="p-4 mb-4">
+            <div className="flex gap-4">
+              <Select label="Model Year" value={filters.model_year} onChange={e => setFilters(f => ({...f, model_year: e.target.value}))}
+                options={[{value:'',label:'All'},{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'}]} />
+              <Select label="Body Style" value={filters.body_style} onChange={e => setFilters(f => ({...f, body_style: e.target.value}))}
+                options={[{value:'',label:'All'},{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}]} />
+              <Select label="Deal Type" value={filters.deal_type} onChange={e => setFilters(f => ({...f, deal_type: e.target.value}))}
+                options={[{value:'',label:'All'},{value:'cash',label:'Cash'},{value:'apr',label:'APR'},{value:'lease',label:'Lease'},{value:'cvp',label:'CVP'},{value:'demo',label:'Demo'}]} />
+            </div>
+          </Card>
+          <Card>
+            <div className="px-4 py-3 border-b border-dove flex justify-between items-center">
+              <span className="text-sm text-silver-dust">{codes.length} codes</span>
+            </div>
+            <DataTable columns={columns} data={codes} />
+          </Card>
+        </div>
+      );
+    }
+
+    // ==================== Incentive Lookup Page ====================
+    function PaymentEstimator({ dealType: initDealType, incentive, initMsrp, modelYear, bodyStyle, trim }) {
+      const [open, setOpen] = React.useState(true);
+      const [tab, setTab] = React.useState(initDealType || 'cash');
+      const [rates, setRates] = React.useState({ apr: [], lease: [], lease_by_trim: {}, mileage_degradation: {} });
+      const [mileage, setMileage] = React.useState('10000');
+      const [pf, setPf] = React.useState({
+        msrp: initMsrp || '75000', down: '0', trade: '0',
+        discount: '0', dealer_fee: '0',
+        apr: '5.99', term_finance: '60',
+        money_factor: '0.00250', residual_pct: '55', term_lease: '36', acq_fee: '895',
+      });
+      const v = (k) => parseFloat(pf[k]) || 0;
+
+      // Sync MSRP
+      React.useEffect(() => { if (initMsrp) setPf(f => ({...f, msrp: initMsrp})); }, [initMsrp]);
+
+      // Fetch Santander rates for this config
+      React.useEffect(() => {
+        const my = modelYear || 'MY26';
+        const bs = bodyStyle || 'station_wagon';
+        const trimParam = trim ? `&trim=${encodeURIComponent(trim)}` : '';
+        API.get(`/lookup/rates?model_year=${my}&body_style=${bs}&tier=1${trimParam}`)
+          .then(data => {
+            setRates(data);
+            // Auto-set first available APR rate
+            if (data.apr?.length > 0) {
+              const best = data.apr.find(r => r.term === 60) || data.apr[0];
+              setPf(f => ({...f, apr: String(best.apr), term_finance: String(best.term)}));
+            }
+            // Auto-set first available lease rate
+            if (data.lease?.length > 0) {
+              const best = data.lease.find(r => r.term === 36 && r.money_factor != null)
+                || data.lease.find(r => r.money_factor != null)
+                || data.lease[0];
+              if (best) {
+                setPf(f => ({
+                  ...f,
+                  money_factor: best.money_factor != null ? String(best.money_factor) : f.money_factor,
+                  residual_pct: String(best.residual_pct || 55),
+                  term_lease: String(best.term),
+                  acq_fee: String(best.acq_fee || 895),
+                }));
+              }
+            }
+          })
+          .catch(() => {});
+      }, [modelYear, bodyStyle, trim]);
+
+      // Auto-update APR when term changes — pull from loaded rates
+      React.useEffect(() => {
+        if (tab === 'apr' && rates.apr?.length > 0) {
+          const match = rates.apr.find(r => r.term === parseInt(pf.term_finance));
+          if (match) setPf(f => ({...f, apr: String(match.apr)}));
+        }
+      }, [pf.term_finance]);
+
+      // Auto-update lease MF + residual when term or mileage changes — pull from loaded rates
+      React.useEffect(() => {
+        if (tab === 'lease' && rates.lease?.length > 0) {
+          const match = rates.lease.find(r => r.term === parseInt(pf.term_lease));
+          if (match) {
+            const baseRes = match.residual_pct || 55;
+            const degrade = rates.mileage_degradation || {};
+            const adj = degrade[mileage] !== undefined ? degrade[mileage] : 0;
+            const adjustedRes = Math.max(baseRes + adj, 0);
+            const updates = { residual_pct: String(adjustedRes), acq_fee: String(match.acq_fee || 895) };
+            if (match.money_factor != null) updates.money_factor = String(match.money_factor);
+            setPf(f => ({...f, ...updates}));
+          }
+        }
+      }, [pf.term_lease, mileage, rates.lease]);
+
+      const msrp = v('msrp'), down = v('down'), trade = v('trade'), discount = v('discount'), fee = v('dealer_fee');
+      const sellingPrice = msrp - discount;
+
+      // Build APR term options from loaded Santander rates
+      const aprTermOpts = rates.apr?.length > 0
+        ? rates.apr.map(r => ({ value: String(r.term), label: `${r.term}mo @ ${r.apr}%` }))
+        : [{value:'36',label:'36mo'},{value:'48',label:'48mo'},{value:'60',label:'60mo'},{value:'72',label:'72mo'},{value:'84',label:'84mo'}];
+
+      // Build lease term options from loaded rates
+      const degrade = rates.mileage_degradation || {};
+      const mileageAdj = degrade[mileage] !== undefined ? degrade[mileage] : 0;
+      const leaseTermOpts = rates.lease?.length > 0
+        ? rates.lease.filter(r => r.residual_pct != null).map(r => {
+            const adjRes = Math.max((r.residual_pct || 0) + mileageAdj, 0);
+            const mfLabel = r.money_factor != null ? ` MF ${r.money_factor}` : ' Std MF';
+            return { value: String(r.term), label: `${r.term}mo | ${adjRes}% res${mfLabel}` };
+          })
+        : [{value:'24',label:'24mo'},{value:'36',label:'36mo'},{value:'39',label:'39mo'}];
+
+      const mileageOpts = Object.keys(rates.mileage_degradation || {"7500": 1, "10000": 0, "12000": -1, "15000": -2})
+        .sort((a,b) => Number(a) - Number(b))
+        .map(m => {
+          const adj = (rates.mileage_degradation || {})[m] || 0;
+          const adjLabel = adj > 0 ? ` (+${adj}pt)` : adj < 0 ? ` (${adj}pt)` : ' (base)';
+          return { value: m, label: `${Number(m).toLocaleString()} mi/yr${adjLabel}` };
+        });
+
+      let monthly = 0, label = '', lines = [];
+
+      if (tab === 'apr') {
+        const rate = v('apr') / 100 / 12;
+        const term = parseInt(pf.term_finance) || 60;
+        const financed = Math.max(sellingPrice - incentive - down - trade + fee, 0);
+        if (rate > 0 && term > 0 && financed > 0)
+          monthly = (financed * rate) / (1 - Math.pow(1 + rate, -term));
+        const trimLabel = rates.apr?.[0]?.trim || trim || '';
+        label = `${term}mo @ ${pf.apr}% Santander APR${trimLabel ? ' (' + trimLabel + ')' : ''}`;
+        lines = [
+          ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
+          ['Incentive Applied', -incentive], ['Down Payment', -down], ['Trade-In', -trade],
+          ['Dealer Fee', fee], ['Amount Financed', financed],
+        ];
+      } else if (tab === 'lease') {
+        const mf = v('money_factor'), resPct = v('residual_pct'), term = parseInt(pf.term_lease) || 36, acq = v('acq_fee');
+        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq, 0);
+        const residual = msrp * resPct / 100;
+        monthly = Math.max((adjCap - residual) / term + (adjCap + residual) * mf, 0);
+        const trimLabel = rates.lease?.[0]?.trim || trim || '';
+        label = `${term}mo Lease | MF ${pf.money_factor} (${(mf * 2400).toFixed(2)}% APR) | ${resPct}% res @ ${Number(mileage).toLocaleString()} mi/yr${trimLabel ? ' | ' + trimLabel : ''}`;
+        lines = [
+          ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
+          ['Incentive Applied', -incentive], ['Down / Cap Reduction', -down], ['Trade-In', -trade],
+          ['Acq Fee + Dealer Fee', acq + fee], ['Adj. Cap Cost', adjCap],
+          [`Residual (${resPct}%)`, residual],
+        ];
+      } else {
+        label = 'Cash Purchase';
+        lines = [
+          ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
+          ['Incentive Applied', -incentive], ['Down Payment', -down], ['Trade-In', -trade],
+          ['Dealer Fee', fee], ['Net Purchase Price', sellingPrice - incentive - down - trade + fee],
+        ];
+      }
+
+      const hasRates = (tab === 'apr' && rates.apr?.length > 0) || (tab === 'lease' && rates.lease?.length > 0);
+
+      return (
+        <Card className="mb-4 overflow-hidden">
+          <button onClick={() => setOpen(!open)}
+            className="w-full flex items-center justify-between px-6 py-3 bg-onyx text-white text-sm font-semibold uppercase tracking-wider hover:bg-charcoal transition-colors">
+            <span>Payment Estimator</span>
+            <span className="text-lg">{open ? '\u2212' : '+'}</span>
+          </button>
+          {open && (
+            <div className="p-5 fade-in">
+              {/* Deal type tabs */}
+              <div className="flex rounded-lg bg-dove p-0.5 mb-4">
+                {[{id:'cash',label:'Cash'},{id:'apr',label:'Finance (APR)'},{id:'lease',label:'Lease'}].map(t => (
+                  <button key={t.id} onClick={() => setTab(t.id)}
+                    className={`flex-1 py-2 text-sm font-medium rounded-md transition-colors ${
+                      tab === t.id ? 'bg-white text-onyx shadow-sm' : 'text-iron-smoke hover:text-onyx'
+                    }`}>{t.label}</button>
+                ))}
+              </div>
+
+              {/* Santander rate badge */}
+              {hasRates && (
+                <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
+                  <span className="font-bold">Santander</span> rates auto-loaded for {modelYear || 'MY26'} {(bodyStyle || '').replace('_',' ').replace(/\b\w/g, c => c.toUpperCase())}{trim ? ` ${trim}` : ''}
+                </div>
+              )}
+
+              {/* Payment result hero */}
+              {tab !== 'cash' ? (
+                <div className="text-center mb-4 py-4 bg-mushroom-light rounded-lg">
+                  <p className="text-xs uppercase tracking-wider text-silver-dust mb-1">Estimated Monthly Payment</p>
+                  <p className="text-4xl font-bold text-onyx">${Math.round(monthly).toLocaleString()}<span className="text-lg text-silver-dust font-normal">/mo</span></p>
+                  <p className="text-xs text-silver-dust mt-1">{label}</p>
+                </div>
+              ) : (
+                <div className="text-center mb-4 py-4 bg-mushroom-light rounded-lg">
+                  <p className="text-xs uppercase tracking-wider text-silver-dust mb-1">Net Purchase Price</p>
+                  <p className="text-4xl font-bold text-onyx">${Math.max(sellingPrice - incentive - down - trade + fee, 0).toLocaleString()}</p>
+                  <p className="text-xs text-silver-dust mt-1">After discount + incentives</p>
+                </div>
+              )}
+
+              {/* Finance-specific rate selectors — prominent, above the line items */}
+              {tab === 'apr' && (
+                <div className="grid grid-cols-2 gap-3 mb-4 p-3 bg-mushroom-light/50 rounded border border-dove">
+                  <Select label="Term & Rate (Santander Tier 1)" value={pf.term_finance} onChange={e => setPf(f => ({...f, term_finance: e.target.value}))} options={aprTermOpts} />
+                  <Input label="APR % (override)" type="number" step="0.01" value={pf.apr} onChange={e => setPf(f => ({...f, apr: e.target.value}))} />
+                </div>
+              )}
+              {tab === 'lease' && (
+                <div className="space-y-3 mb-4 p-3 bg-mushroom-light/50 rounded border border-dove">
+                  <div className="grid grid-cols-2 gap-3">
+                    <Select label="Term & Residual (Santander Tier 1)" value={pf.term_lease} onChange={e => setPf(f => ({...f, term_lease: e.target.value}))} options={leaseTermOpts} />
+                    <Select label="Annual Mileage" value={mileage} onChange={e => setMileage(e.target.value)} options={mileageOpts} />
+                  </div>
+                  <div className="grid grid-cols-3 gap-3">
+                    <Input label="Money Factor" type="number" step="0.00001" value={pf.money_factor} onChange={e => setPf(f => ({...f, money_factor: e.target.value}))} />
+                    <Input label="Residual (%)" type="number" value={pf.residual_pct} onChange={e => setPf(f => ({...f, residual_pct: e.target.value}))} />
+                    <Input label="Acq Fee ($)" type="number" value={pf.acq_fee} onChange={e => setPf(f => ({...f, acq_fee: e.target.value}))} />
+                  </div>
+                </div>
+              )}
+
+              {/* Deal line items */}
+              <div className="space-y-1 mb-4 text-sm">
+                {lines.map(([lbl, val], i) => {
+                  const isLast = i === lines.length - 1, isNeg = val < 0;
+                  if (val === 0 && !isLast && lbl !== 'Selling Price') return null;
+                  return (
+                    <div key={i} className={`flex justify-between py-1 ${isLast ? 'border-t-2 border-onyx pt-2 font-bold' : 'border-b border-dove/40'}`}>
+                      <span>{lbl}</span>
+                      <span className={isNeg ? 'text-success' : ''}>{isNeg ? '-' : ''}${Math.abs(val).toLocaleString(undefined, {maximumFractionDigits: 0})}</span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Deal input fields */}
+              <div className="grid grid-cols-2 gap-3 mb-3">
+                <Input label="MSRP ($)" type="number" value={pf.msrp} onChange={e => setPf(f => ({...f, msrp: e.target.value}))} />
+                <Input label="Dealer Discount ($)" type="number" value={pf.discount} onChange={e => setPf(f => ({...f, discount: e.target.value}))} placeholder="0" />
+                <Input label="Down Payment ($)" type="number" value={pf.down} onChange={e => setPf(f => ({...f, down: e.target.value}))} />
+                <Input label="Trade-In Value ($)" type="number" value={pf.trade} onChange={e => setPf(f => ({...f, trade: e.target.value}))} />
+                <Input label="Dealer Fee ($)" type="number" value={pf.dealer_fee} onChange={e => setPf(f => ({...f, dealer_fee: e.target.value}))} placeholder="0" />
+              </div>
+
+              {/* Lease comparison by trim (if available) */}
+              {tab === 'lease' && rates.lease_by_trim && Object.keys(rates.lease_by_trim).length > 1 && (
+                <details className="mb-3">
+                  <summary className="text-xs font-semibold text-iron-smoke cursor-pointer hover:text-onyx uppercase tracking-wider">Rate Comparison by Trim</summary>
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full text-xs">
+                      <thead>
+                        <tr className="border-b border-dove">
+                          <th className="text-left py-1 pr-2 text-silver-dust uppercase">Trim</th>
+                          <th className="text-left py-1 px-2 text-silver-dust uppercase">Term</th>
+                          <th className="text-right py-1 px-2 text-silver-dust uppercase">MF</th>
+                          <th className="text-right py-1 px-2 text-silver-dust uppercase">Res %</th>
+                          <th className="text-right py-1 pl-2 text-silver-dust uppercase">APR Equiv</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {Object.entries(rates.lease_by_trim).map(([trimName, termRates]) =>
+                          termRates.filter(r => r.money_factor != null).map((r, j) => (
+                            <tr key={`${trimName}-${j}`} className="border-b border-dove/30 hover:bg-dove/20">
+                              <td className="py-1 pr-2 font-medium">{j === 0 ? trimName : ''}</td>
+                              <td className="py-1 px-2">{r.term}mo</td>
+                              <td className="py-1 px-2 text-right font-mono">{r.money_factor?.toFixed(5) || 'Std'}</td>
+                              <td className="py-1 px-2 text-right">{Math.max((r.residual_pct || 0) + mileageAdj, 0)}%</td>
+                              <td className="py-1 pl-2 text-right">{r.money_factor ? (r.money_factor * 2400).toFixed(2) + '%' : 'Std'}</td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+
+              <p className="text-xs text-silver-dust italic text-center mt-3">
+                Estimate only. Does not include tax, title, or registration.
+                {tab === 'apr' && ' APR and terms subject to Santander credit approval. Rate shown is Tier 1.'}
+                {tab === 'lease' && ` Lease subject to Santander approval. Residual adjusted for ${Number(mileage).toLocaleString()} mi/yr. First payment, taxes, and disposition fee may apply.`}
+              </p>
+            </div>
+          )}
+        </Card>
+      );
+    }
+
+    function LookupPage() {
+      const toast = React.useContext(ToastContext);
+      const [form, setForm] = React.useState({
+        vin: '', model_year: 'MY25', body_style: 'station_wagon', trim: '', special_edition: '',
+        msrp: '', finance_type: 'cash', lender: '', state: '', zip_code: '',
+        conquest: false, conquest_brand: '', loyalty: false, loyalty_vin: '', _state_name: '',
+      });
+      const [result, setResult] = React.useState(null);
+      const [loading, setLoading] = React.useState(false);
+      const [vinLoading, setVinLoading] = React.useState(false);
+
+      const update = (key, val) => setForm(f => ({ ...f, [key]: val }));
+
+      const [vinData, setVinData] = React.useState(null);
+      const vinActiveRef = React.useRef(false); // true when VIN has populated the form
+
+      // Auto-lookup VIN when it reaches 17 characters
+      React.useEffect(() => {
+        const vin = form.vin.trim().toUpperCase();
+        if (vin.length < 17) {
+          // VIN cleared or incomplete — reset VIN state, allow manual selectors
+          if (vinActiveRef.current) {
+            vinActiveRef.current = false;
+            setVinData(null);
+          }
+          return;
+        }
+        // VIN is 17 chars — look it up
+        setVinLoading(true);
+        API.get(`/lookup/vin/${vin}`)
+          .then(data => {
+            vinActiveRef.current = true;
+            setVinData(data);
+            setForm(f => ({
+              ...f,
+              model_year: data.model_year || f.model_year,
+              body_style: data.body_style || f.body_style,
+              trim: data.trim || f.trim,
+              msrp: data.msrp ? String(Math.round(data.msrp)) : f.msrp,
+              special_edition: data.special_edition || f.special_edition,
+            }));
+            toast.show(`Vehicle found: ${data.model_year || ''} ${(data.body_style || '').replace('_',' ')} ${data.trim || ''}${data.color_exterior ? ' — ' + data.color_exterior : ''}`);
+          })
+          .catch(() => {
+            vinActiveRef.current = false;
+            setVinData(null);
+            toast.show('VIN not found in inventory. Select details manually.', 'warning');
+          })
+          .finally(() => setVinLoading(false));
+      }, [form.vin]);
+
+      // Auto-fetch MSRP from product catalog when manual selectors change
+      // Only fires when VIN hasn't populated the form
+      React.useEffect(() => {
+        if (vinActiveRef.current) return;
+        const params = `model_year=${form.model_year}&body_style=${form.body_style}${form.trim ? '&trim=' + encodeURIComponent(form.trim) : ''}`;
+        API.get(`/lookup/msrp?${params}`).then(data => {
+          if (data.msrp && !vinActiveRef.current) {
+            setForm(f => ({...f, msrp: String(data.msrp)}));
+          }
+        }).catch(() => {});
+      }, [form.model_year, form.body_style, form.trim]);
+
+      async function handleLookup(e) {
+        e.preventDefault();
+        setLoading(true); setResult(null);
+        try {
+          // Clean form: convert empty strings to null for optional fields
+          const clean = {...form};
+          ['vin','trim','special_edition','msrp','lender','state','zip_code','conquest_brand','loyalty_vin'].forEach(k => {
+            if (clean[k] === '') clean[k] = null;
+          });
+          if (clean.msrp) clean.msrp = parseFloat(clean.msrp);
+          delete clean._state_name; // internal field, not for API
+          const res = await API.post('/lookup', clean);
+          setResult(res);
+        } catch (e) {
+          toast.show(e.message, 'error');
+          setResult(null);
+        } finally { setLoading(false); }
+      }
+
+      return (
+        <div className="fade-in max-w-7xl mx-auto">
+          <h1 className="text-2xl font-bold text-onyx mb-6">Incentive Lookup</h1>
+          <div className="flex flex-col lg:flex-row gap-6">
+            <div className="w-full lg:w-[380px] lg:flex-shrink-0">
+              <Card className="p-6">
+                <form onSubmit={handleLookup}>
+                  <h3 className="font-semibold text-onyx mb-4 uppercase text-xs tracking-wider">Vehicle Information</h3>
+                  <div className="mb-2">
+                    <Input label="VIN Lookup" value={form.vin} onChange={e => update('vin', e.target.value.toUpperCase())}
+                      placeholder="Enter VIN to auto-populate vehicle details" className="font-mono" />
+                    {vinLoading && <p className="text-xs text-silver-dust mt-1">Searching inventory...</p>}
+                  </div>
+
+                  {/* VIN match info */}
+                  {vinData && (
+                    <div className="p-3 bg-success/5 border border-success/20 rounded-md mb-2 text-xs fade-in">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="font-semibold text-success">Vehicle Found</span>
+                        <Badge variant={vinData.source === 'inventory' ? 'active' : 'draft'}>
+                          {vinData.source === 'inventory' ? 'Inventory' : 'VIN Pattern'}
+                        </Badge>
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-iron-smoke">
+                        <span>{vinData.model_year} {(vinData.body_style || '').replace('_',' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                        <span>{vinData.trim || ''}</span>
+                        {vinData.color_exterior && <span>Ext: {vinData.color_exterior}</span>}
+                        {vinData.msrp && <span>MSRP: ${Number(vinData.msrp).toLocaleString()}</span>}
+                        {vinData.dealer_name && <span>Dealer: {vinData.dealer_name}</span>}
+                        {vinData.status && <span>Status: {vinData.status}</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* OR Divider */}
+                  <div className="flex items-center gap-3 my-3">
+                    <div className="flex-1 h-px bg-mushroom"></div>
+                    <span className="text-xs font-semibold text-silver-dust uppercase tracking-widest">or select manually</span>
+                    <div className="flex-1 h-px bg-mushroom"></div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3 mb-3">
+                    <Select label="Model Year" value={form.model_year} onChange={e => update('model_year', e.target.value)}
+                      options={[{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'},{value:'MY27',label:'MY27'}]} />
+                    <Select label="Body Style" value={form.body_style} onChange={e => update('body_style', e.target.value)}
+                      options={[{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}]} />
+                  </div>
+                  <Select label="Trim" value={form.trim} onChange={e => update('trim', e.target.value)} className="mb-3"
+                    options={[{value:'',label:'Any'},{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},
+                      {value:'Belstaff',label:'Belstaff'},{value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'}]} />
+
+                  <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Deal Information</h3>
+                  <Select label="Finance Type" value={form.finance_type} onChange={e => update('finance_type', e.target.value)} className="mb-3"
+                    options={[{value:'cash',label:'Cash'},{value:'apr',label:'APR (Finance)'},{value:'lease',label:'Lease'}]} />
+
+                  <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Location</h3>
+                  <div className="flex gap-2 mb-2">
+                    <Input label="ZIP Code" value={form.zip_code} onChange={e => {
+                      update('zip_code', e.target.value);
+                      // Auto-resolve state when 5 digits entered
+                      const z = e.target.value.replace(/\D/g, '');
+                      if (z.length >= 5) {
+                        API.get(`/lookup/zip/${z}`).then(r => {
+                          update('state', r.state);
+                          update('_state_name', r.state_name);
+                        }).catch(() => {});
+                      }
+                    }} placeholder="e.g., 92101" className="w-28" />
+                    <Select label="State" value={form.state} onChange={e => update('state', e.target.value)} className="flex-1"
+                      options={[{value:'',label:'Auto from ZIP'},
+                        {value:'AL',label:'AL'},{value:'AK',label:'AK'},{value:'AZ',label:'AZ'},{value:'AR',label:'AR'},
+                        {value:'CA',label:'CA'},{value:'CO',label:'CO'},{value:'CT',label:'CT'},{value:'DE',label:'DE'},
+                        {value:'FL',label:'FL'},{value:'GA',label:'GA'},{value:'HI',label:'HI'},{value:'ID',label:'ID'},
+                        {value:'IL',label:'IL'},{value:'IN',label:'IN'},{value:'IA',label:'IA'},{value:'KS',label:'KS'},
+                        {value:'KY',label:'KY'},{value:'LA',label:'LA'},{value:'ME',label:'ME'},{value:'MD',label:'MD'},
+                        {value:'MA',label:'MA'},{value:'MI',label:'MI'},{value:'MN',label:'MN'},{value:'MS',label:'MS'},
+                        {value:'MO',label:'MO'},{value:'MT',label:'MT'},{value:'NE',label:'NE'},{value:'NV',label:'NV'},
+                        {value:'NH',label:'NH'},{value:'NJ',label:'NJ'},{value:'NM',label:'NM'},{value:'NY',label:'NY'},
+                        {value:'NC',label:'NC'},{value:'ND',label:'ND'},{value:'OH',label:'OH'},{value:'OK',label:'OK'},
+                        {value:'OR',label:'OR'},{value:'PA',label:'PA'},{value:'RI',label:'RI'},{value:'SC',label:'SC'},
+                        {value:'SD',label:'SD'},{value:'TN',label:'TN'},{value:'TX',label:'TX'},{value:'UT',label:'UT'},
+                        {value:'VT',label:'VT'},{value:'VA',label:'VA'},{value:'WA',label:'WA'},{value:'WV',label:'WV'},
+                        {value:'WI',label:'WI'},{value:'WY',label:'WY'},{value:'DC',label:'DC'},
+                      ]} />
+                  </div>
+                  {form.state && <p className="text-xs text-success mb-3">Resolved: {form.state}{form._state_name ? ` (${form._state_name})` : ''}</p>}
+
+                  <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Qualifications</h3>
+                  <div className="space-y-3">
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={form.conquest} onChange={e => update('conquest', e.target.checked)}
+                        className="w-4 h-4 rounded border-mushroom text-flare-red focus:ring-flare-red" />
+                      <span className="text-sm">Conquest (Competitive Trade-In)</span>
+                    </label>
+                    {form.conquest && (
+                      <Input label="Competitor Brand" value={form.conquest_brand} onChange={e => update('conquest_brand', e.target.value)} placeholder="e.g., Land Rover" />
+                    )}
+                    <label className="flex items-center gap-3 cursor-pointer">
+                      <input type="checkbox" checked={form.loyalty} onChange={e => update('loyalty', e.target.checked)}
+                        className="w-4 h-4 rounded border-mushroom text-flare-red focus:ring-flare-red" />
+                      <span className="text-sm">Loyalty (Existing INEOS Household)</span>
+                    </label>
+                    {form.loyalty && (
+                      <Input label="Existing Household VIN" value={form.loyalty_vin} onChange={e => update('loyalty_vin', e.target.value)} />
+                    )}
+                  </div>
+                  <Button type="submit" disabled={loading} className="w-full mt-6">
+                    {loading ? 'Looking up...' : 'Find Incentive Code'}
+                  </Button>
+                </form>
+              </Card>
+            </div>
+
+            <div className="flex-1 min-w-0">
+              {result ? (
+                <div className="fade-in">
+                  <Card className="p-8 border-2 border-flare-red/20 mb-4">
+                    <div className="text-center">
+                      <p className="text-xs uppercase tracking-wider text-silver-dust mb-2">Campaign Code to Enter in SAP</p>
+                      <div className="inline-block bg-onyx text-white px-8 py-4 rounded-lg mb-3">
+                        <span className="text-5xl font-bold tracking-widest">{result.code}</span>
+                      </div>
+                      <p className="text-3xl font-bold text-success">${result.total_support_amount.toLocaleString()}</p>
+                      <p className="text-sm text-silver-dust mt-1">Total Support Amount</p>
+                    </div>
+                  </Card>
+
+                  <Card className="p-6 mb-4">
+                    <h3 className="text-sm font-semibold text-onyx uppercase mb-4">Incentive Breakdown</h3>
+                    <div className="space-y-2">
+                      {result.layers.map((l, i) => (
+                        <div key={i} className="flex justify-between py-2 border-b border-dove/50">
+                          <span className="text-sm">{l.program_name}</span>
+                          <span className="text-sm font-semibold">${l.amount.toLocaleString()}</span>
+                        </div>
+                      ))}
+                      <div className="flex justify-between py-2 border-t-2 border-onyx">
+                        <span className="font-bold">TOTAL SUPPORT</span>
+                        <span className="font-bold text-lg">${result.total_support_amount.toLocaleString()}</span>
+                      </div>
+                    </div>
+                  </Card>
+
+                  {/* Payment Estimator */}
+                  <PaymentEstimator dealType={form.finance_type} incentive={result.total_support_amount} initMsrp={form.msrp || (vinData?.msrp ? String(vinData.msrp) : '75000')} modelYear={form.model_year} bodyStyle={form.body_style} trim={form.trim || (vinData?.trim)} />
+
+                  {result.not_applicable?.length > 0 && (
+                    <Card className="p-6 opacity-60">
+                      <h3 className="text-sm font-semibold text-silver-dust uppercase mb-3">Not Applicable</h3>
+                      {result.not_applicable.map((na, i) => (
+                        <div key={i} className="text-xs text-silver-dust mb-1">{na.label} — {na.reason}</div>
+                      ))}
+                    </Card>
+                  )}
+                </div>
+              ) : (
+                <div className="flex items-center justify-center h-full text-silver-dust">
+                  <div className="text-center">
+                    <span className="text-6xl block mb-4">⊕</span>
+                    <p className="text-lg">Enter deal details to find the campaign code</p>
+                    <p className="text-sm mt-2">One code. One amount. Zero guesswork.</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    // ==================== Transactions Page ====================
+    function TransactionsPage() {
+      const { user } = React.useContext(AuthContext);
+      const toast = React.useContext(ToastContext);
+      const [transactions, setTransactions] = React.useState({ items: [], total: 0 });
+      const [loading, setLoading] = React.useState(true);
+      const [showImport, setShowImport] = React.useState(false);
+      const [importResult, setImportResult] = React.useState(null);
+      const [tab, setTab] = React.useState('all');
+
+      const load = () => {
+        const params = tab === 'anomalies' ? '?anomalies_only=true' : '';
+        API.get(`/transactions${params}`).then(setTransactions).finally(() => setLoading(false));
+      };
+      React.useEffect(() => { load(); }, [tab]);
+
+      async function handleFileUpload(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        try {
+          const res = await API.upload('/transactions/import', file);
+          setImportResult(res);
+          toast.show(`Imported ${res.imported} transactions`);
+          load();
+        } catch (err) { toast.show(err.message, 'error'); }
+      }
+
+      const columns = [
+        { key: 'vin', label: 'VIN', render: v => <span className="font-mono text-xs">{v}</span> },
+        { key: 'campaign_code', label: 'Code', render: v => <span className="font-mono font-bold text-flare-red">{v}</span> },
+        { key: 'dealer_name', label: 'Dealer' },
+        { key: 'retail_date', label: 'Retail Date' },
+        { key: 'support_amount', label: 'Amount', render: v => v ? `$${Number(v).toLocaleString()}` : '-' },
+        { key: 'payment_status', label: 'Status', render: v => <Badge variant={v}>{v}</Badge> },
+        { key: 'anomaly_flag', label: 'Anomaly', render: v => v ? <span className="text-xs text-error">{v}</span> : '' },
+      ];
+
+      if (loading) return <Spinner />;
+
+      return (
+        <div className="fade-in">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold text-onyx">Transactions</h1>
+            {user.role === 'admin' && (
+              <div className="flex gap-2">
+                <label className="cursor-pointer">
+                  <Button variant="secondary" onClick={() => document.getElementById('file-upload').click()}>
+                    Upload Daily Report
+                  </Button>
+                  <input id="file-upload" type="file" accept=".xlsx,.xls" onChange={handleFileUpload} className="hidden" />
+                </label>
+              </div>
+            )}
+          </div>
+          {importResult && (
+            <Card className="p-4 mb-4 bg-success/5 border-success/20">
+              <p className="text-sm font-medium text-success">
+                Import Complete: {importResult.imported} imported, {importResult.duplicates} duplicates, {importResult.anomalies} anomalies, {importResult.errors} errors
+              </p>
+            </Card>
+          )}
+          <div className="flex gap-2 mb-4">
+            <button onClick={() => setTab('all')} className={`px-3 py-1.5 rounded-full text-sm ${tab === 'all' ? 'bg-onyx text-white' : 'bg-dove text-iron-smoke'}`}>All ({transactions.total})</button>
+            <button onClick={() => setTab('anomalies')} className={`px-3 py-1.5 rounded-full text-sm ${tab === 'anomalies' ? 'bg-error text-white' : 'bg-dove text-iron-smoke'}`}>Anomalies</button>
+          </div>
+          <Card>
+            <DataTable columns={columns} data={transactions.items} />
+          </Card>
+        </div>
+      );
+    }
+
+    // ==================== Pay Files Page ====================
+    function PayFilesPage() {
+      const toast = React.useContext(ToastContext);
+      const [payfiles, setPayfiles] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      const [period, setPeriod] = React.useState('2026-04');
+      const [generating, setGenerating] = React.useState(false);
+
+      const load = () => API.get('/payfiles').then(setPayfiles).finally(() => setLoading(false));
+      React.useEffect(() => { load(); }, []);
+
+      async function handleGenerate() {
+        setGenerating(true);
+        try {
+          await API.post('/payfiles/generate', { period });
+          toast.show('Pay file generated');
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+        finally { setGenerating(false); }
+      }
+
+      async function handleSubmit(id) {
+        try { await API.post(`/payfiles/${id}/submit`); toast.show('Pay file submitted'); load(); }
+        catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      async function handleConfirm(id) {
+        try { await API.post(`/payfiles/${id}/confirm`); toast.show('Pay file confirmed — transactions marked as paid'); load(); }
+        catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      if (loading) return <Spinner />;
+
+      return (
+        <div className="fade-in">
+          <div className="flex items-center justify-between mb-6">
+            <h1 className="text-2xl font-bold text-onyx">Pay Files</h1>
+            <div className="flex items-center gap-3">
+              <Input type="month" value={period} onChange={e => setPeriod(e.target.value)} />
+              <Button onClick={handleGenerate} disabled={generating}>
+                {generating ? 'Generating...' : 'Generate Pay File'}
+              </Button>
+            </div>
+          </div>
+          <div className="space-y-4">
+            {payfiles.map(pf => (
+              <Card key={pf.id} className="p-5">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="font-semibold text-onyx">Period: {pf.period}</h3>
+                    <p className="text-sm text-silver-dust">Generated: {pf.generated_date?.split('.')[0] || 'N/A'}</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-xl font-bold text-onyx">${Number(pf.total_amount).toLocaleString()}</p>
+                    <p className="text-sm text-silver-dust">{pf.total_units} units</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant={pf.status}>{pf.status}</Badge>
+                    <Button size="sm" variant="outline" onClick={() => window.open(`/api/payfiles/${pf.id}/download`, '_blank')}>Download</Button>
+                    {pf.status === 'draft' && <Button size="sm" onClick={() => handleSubmit(pf.id)}>Submit</Button>}
+                    {pf.status === 'submitted' && <Button size="sm" variant="secondary" onClick={() => handleConfirm(pf.id)}>Confirm Paid</Button>}
+                  </div>
+                </div>
+              </Card>
+            ))}
+            {!payfiles.length && <EmptyState message="No pay files generated yet" />}
+          </div>
+        </div>
+      );
+    }
+
+    // ==================== Settings Page ====================
+    function SettingsPage() {
+      const [tab, setTab] = React.useState('dealers');
+      return (
+        <div className="fade-in">
+          <h1 className="text-2xl font-bold text-onyx mb-6">Settings</h1>
+          <div className="flex gap-2 mb-6">
+            {['dealers', 'products', 'users', 'stacking', 'mileage'].map(t => (
+              <button key={t} onClick={() => setTab(t)}
+                className={`px-4 py-2 rounded-lg text-sm ${tab === t ? 'bg-onyx text-white' : 'bg-dove text-iron-smoke hover:bg-mushroom'}`}>
+                {t === 'mileage' ? 'Lease Mileage' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+          {tab === 'dealers' && <DealersSettings />}
+          {tab === 'products' && <ProductsSettings />}
+          {tab === 'users' && <UsersSettings />}
+          {tab === 'stacking' && <StackingSettings />}
+          {tab === 'mileage' && <MileageDegradeSettings />}
+        </div>
+      );
+    }
+
+    function DealersSettings() {
+      const [dealers, setDealers] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      React.useEffect(() => { API.get('/settings/dealers').then(setDealers).finally(() => setLoading(false)); }, []);
+
+      const columns = [
+        { key: 'ship_to_code', label: 'Ship-To Code' },
+        { key: 'name', label: 'Dealer Name' },
+        { key: 'region', label: 'Region', render: v => <span className="capitalize">{v}</span> },
+        { key: 'rbm', label: 'RBM' },
+        { key: 'state', label: 'State' },
+        { key: 'active', label: 'Active', render: v => v ? <Badge variant="active">Active</Badge> : <Badge variant="expired">Inactive</Badge> },
+      ];
+
+      if (loading) return <Spinner />;
+      return <Card><DataTable columns={columns} data={dealers} /></Card>;
+    }
+
+    function ProductsSettings() {
+      const toast = React.useContext(ToastContext);
+      const [products, setProducts] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      const [editId, setEditId] = React.useState(null);
+      const [editForm, setEditForm] = React.useState({});
+      const [showCreate, setShowCreate] = React.useState(false);
+      const [createForm, setCreateForm] = React.useState({
+        model_year: 'MY26', body_style: 'station_wagon', trim: 'Base', special_edition: '', msrp: '', active: true
+      });
+
+      const load = () => API.get('/settings/products').then(setProducts).finally(() => setLoading(false));
+      React.useEffect(() => { load(); }, []);
+
+      function startEdit(p) {
+        setEditId(p.id);
+        setEditForm({
+          model_year: p.model_year, body_style: p.body_style, trim: p.trim,
+          special_edition: p.special_edition || '', msrp: p.msrp ? String(p.msrp) : '', active: p.active
+        });
+      }
+
+      async function saveEdit(id) {
+        try {
+          await API.put(`/settings/products/${id}`, {
+            ...editForm,
+            msrp: editForm.msrp ? parseFloat(editForm.msrp) : null,
+          });
+          toast.show('Product updated');
+          setEditId(null);
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      async function handleCreate(e) {
+        e.preventDefault();
+        try {
+          await API.post('/settings/products', {
+            ...createForm,
+            msrp: createForm.msrp ? parseFloat(createForm.msrp) : null,
+            special_edition: createForm.special_edition || null,
+          });
+          toast.show('Product added');
+          setShowCreate(false);
+          setCreateForm({ model_year: 'MY26', body_style: 'station_wagon', trim: 'Base', special_edition: '', msrp: '', active: true });
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      const myOpts = [{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'},{value:'MY27',label:'MY27'}];
+      const bodyOpts = [{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}];
+      const trimOpts = [{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},{value:'Belstaff',label:'Belstaff'},
+        {value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'},{value:'Arcane Works Detour',label:'Arcane Works Detour'},{value:'Iceland Tactical',label:'Iceland Tactical'}];
+
+      if (loading) return <Spinner />;
+
+      return (
+        <div>
+          <div className="flex justify-end mb-4">
+            <Button size="sm" onClick={() => setShowCreate(true)}>+ Add Product</Button>
+          </div>
+          <Card>
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-dove">
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase">MY</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase">Body Style</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase">Trim</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase">Special Edition</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase">MSRP</th>
+                    <th className="text-left px-4 py-3 text-xs font-semibold text-silver-dust uppercase">Active</th>
+                    <th className="w-32"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map(p => (
+                    <tr key={p.id} className="border-b border-dove/50 hover:bg-dove/30">
+                      {editId === p.id ? (
+                        <React.Fragment>
+                          <td className="px-4 py-2">
+                            <select value={editForm.model_year} onChange={e => setEditForm(f => ({...f, model_year: e.target.value}))}
+                              className="w-full px-2 py-1 border border-mushroom rounded text-sm">{myOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                          </td>
+                          <td className="px-4 py-2">
+                            <select value={editForm.body_style} onChange={e => setEditForm(f => ({...f, body_style: e.target.value}))}
+                              className="w-full px-2 py-1 border border-mushroom rounded text-sm">{bodyOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                          </td>
+                          <td className="px-4 py-2">
+                            <select value={editForm.trim} onChange={e => setEditForm(f => ({...f, trim: e.target.value}))}
+                              className="w-full px-2 py-1 border border-mushroom rounded text-sm">{trimOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                          </td>
+                          <td className="px-4 py-2">
+                            <input value={editForm.special_edition} onChange={e => setEditForm(f => ({...f, special_edition: e.target.value}))}
+                              className="w-full px-2 py-1 border border-mushroom rounded text-sm" placeholder="Optional" />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input type="number" value={editForm.msrp} onChange={e => setEditForm(f => ({...f, msrp: e.target.value}))}
+                              className="w-full px-2 py-1 border border-mushroom rounded text-sm" placeholder="0" />
+                          </td>
+                          <td className="px-4 py-2">
+                            <input type="checkbox" checked={editForm.active} onChange={e => setEditForm(f => ({...f, active: e.target.checked}))} />
+                          </td>
+                          <td className="px-4 py-2 flex gap-1">
+                            <Button size="sm" onClick={() => saveEdit(p.id)}>Save</Button>
+                            <Button size="sm" variant="ghost" onClick={() => setEditId(null)}>Cancel</Button>
+                          </td>
+                        </React.Fragment>
+                      ) : (
+                        <React.Fragment>
+                          <td className="px-4 py-3 text-sm">{p.model_year}</td>
+                          <td className="px-4 py-3 text-sm">{(p.body_style || '').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</td>
+                          <td className="px-4 py-3 text-sm font-medium">{p.trim}</td>
+                          <td className="px-4 py-3 text-sm text-silver-dust">{(p.special_edition || '').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase())}</td>
+                          <td className="px-4 py-3 text-sm font-medium">{p.msrp ? `$${Number(p.msrp).toLocaleString()}` : '-'}</td>
+                          <td className="px-4 py-3 text-sm">{p.active ? <span className="text-success">Active</span> : <span className="text-silver-dust">Inactive</span>}</td>
+                          <td className="px-4 py-3 flex gap-2">
+                            <button onClick={() => startEdit(p)} className="text-xs text-iron-smoke hover:text-onyx hover:underline">Edit</button>
+                            <button onClick={async () => {
+                              if (!confirm(`Delete ${p.model_year} ${p.trim}?`)) return;
+                              try {
+                                const headers = {};
+                                if (API.token) headers['Authorization'] = `Bearer ${API.token}`;
+                                const res = await fetch(`/api/settings/products/${p.id}`, { method: 'DELETE', headers });
+                                if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || 'Delete failed');
+                                toast.show('Product deleted'); load();
+                              } catch (e) { toast.show(e.message, 'error'); }
+                            }} className="text-xs text-error/60 hover:text-error hover:underline">Delete</button>
+                          </td>
+                        </React.Fragment>
+                      )}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Card>
+          <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Add Product">
+            <form onSubmit={handleCreate} className="space-y-3">
+              <Select label="Model Year" value={createForm.model_year} onChange={e => setCreateForm(f => ({...f, model_year: e.target.value}))} options={myOpts} />
+              <Select label="Body Style" value={createForm.body_style} onChange={e => setCreateForm(f => ({...f, body_style: e.target.value}))} options={bodyOpts} />
+              <Select label="Trim" value={createForm.trim} onChange={e => setCreateForm(f => ({...f, trim: e.target.value}))} options={trimOpts} />
+              <Input label="Special Edition (optional)" value={createForm.special_edition} onChange={e => setCreateForm(f => ({...f, special_edition: e.target.value}))} placeholder="e.g., arcane_works_detour" />
+              <Input label="MSRP ($)" type="number" value={createForm.msrp} onChange={e => setCreateForm(f => ({...f, msrp: e.target.value}))} placeholder="e.g., 75000" />
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
+                <Button type="submit">Add Product</Button>
+              </div>
+            </form>
+          </Modal>
+        </div>
+      );
+    }
+
+    function UsersSettings() {
+      const toast = React.useContext(ToastContext);
+      const [users, setUsers] = React.useState([]);
+      const [loading, setLoading] = React.useState(true);
+      const [showCreate, setShowCreate] = React.useState(false);
+      const [form, setForm] = React.useState({ username: '', password: '', name: '', role: 'retailer', region: '', dealer_id: '' });
+
+      const load = () => API.get('/settings/users').then(setUsers).finally(() => setLoading(false));
+      React.useEffect(() => { load(); }, []);
+
+      async function handleCreate(e) {
+        e.preventDefault();
+        try {
+          await API.post('/settings/users', form);
+          toast.show('User created');
+          setShowCreate(false);
+          load();
+        } catch (err) { toast.show(err.message, 'error'); }
+      }
+
+      const columns = [
+        { key: 'username', label: 'Username' },
+        { key: 'name', label: 'Name' },
+        { key: 'role', label: 'Role', render: v => <Badge variant="default">{v}</Badge> },
+        { key: 'region', label: 'Region', render: v => v ? <span className="capitalize">{v}</span> : '' },
+        { key: 'active', label: 'Active', render: v => v ? '✓' : '✗' },
+      ];
+
+      if (loading) return <Spinner />;
+
+      return (
+        <div>
+          <div className="flex justify-end mb-4">
+            <Button size="sm" onClick={() => setShowCreate(true)}>+ Add User</Button>
+          </div>
+          <Card><DataTable columns={columns} data={users} /></Card>
+          <Modal open={showCreate} onClose={() => setShowCreate(false)} title="Create User">
+            <form onSubmit={handleCreate} className="space-y-3">
+              <Input label="Username" value={form.username} onChange={e => setForm(f => ({...f, username: e.target.value}))} required />
+              <Input label="Password" type="password" value={form.password} onChange={e => setForm(f => ({...f, password: e.target.value}))} required />
+              <Input label="Name" value={form.name} onChange={e => setForm(f => ({...f, name: e.target.value}))} required />
+              <Select label="Role" value={form.role} onChange={e => setForm(f => ({...f, role: e.target.value}))}
+                options={[{value:'admin',label:'Admin'},{value:'rbm',label:'RBM'},{value:'retailer',label:'Retailer'}]} />
+              <div className="flex justify-end gap-2 pt-2">
+                <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
+                <Button type="submit">Create</Button>
+              </div>
+            </form>
+          </Modal>
+        </div>
+      );
+    }
+
+    function StackingSettings() {
+      const [rules, setRules] = React.useState(null);
+      const [loading, setLoading] = React.useState(true);
+      React.useEffect(() => { API.get('/settings/stacking-rules').then(setRules).finally(() => setLoading(false)); }, []);
+
+      if (loading) return <Spinner />;
+      if (!rules) return null;
+
+      const allTypes = ['bonus_cash', 'customer_cash', 'apr_cash', 'lease_cash', 'cvp', 'demonstrator', 'loyalty', 'conquest', 'tactical'];
+      const dealTypes = Object.keys(rules);
+
+      return (
+        <Card className="p-6">
+          <h3 className="font-semibold text-onyx mb-4">Stacking Matrix</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-dove">
+                  <th className="text-left px-3 py-2 text-xs font-semibold text-silver-dust uppercase">Deal Type</th>
+                  {allTypes.map(t => (
+                    <th key={t} className="px-3 py-2 text-xs font-semibold text-silver-dust uppercase text-center">{t.replace('_', ' ')}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {dealTypes.map(dt => (
+                  <tr key={dt} className="border-b border-dove/50">
+                    <td className="px-3 py-2 font-medium capitalize">{dt}</td>
+                    {allTypes.map(pt => (
+                      <td key={pt} className="px-3 py-2 text-center">
+                        {rules[dt]?.includes(pt) ? <span className="text-success font-bold">✓</span> : <span className="text-silver-dust">✗</span>}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      );
+    }
+
+    function MileageDegradeSettings() {
+      const toast = React.useContext(ToastContext);
+      const [table, setTable] = React.useState(null);
+      const [loading, setLoading] = React.useState(true);
+      const [saving, setSaving] = React.useState(false);
+
+      React.useEffect(() => {
+        API.get('/settings/mileage-degradation').then(setTable).finally(() => setLoading(false));
+      }, []);
+
+      const handleUpdate = (miles, val) => {
+        setTable(t => ({...t, [miles]: parseFloat(val) || 0}));
+      };
+
+      const handleAddRow = () => {
+        const miles = prompt('Enter annual mileage (e.g., 18000):');
+        if (miles && !isNaN(Number(miles))) {
+          const points = prompt('Enter residual point adjustment (e.g., -3):');
+          if (points !== null) {
+            setTable(t => ({...t, [miles]: parseFloat(points) || 0}));
+          }
+        }
+      };
+
+      const handleRemove = (miles) => {
+        setTable(t => { const n = {...t}; delete n[miles]; return n; });
+      };
+
+      const handleSave = async () => {
+        setSaving(true);
+        try {
+          await API.put('/settings/mileage-degradation', table);
+          toast.show('Mileage degradation table saved');
+        } catch (e) { toast.show(e.message, 'error'); }
+        finally { setSaving(false); }
+      };
+
+      if (loading) return <Spinner />;
+      if (!table) return null;
+
+      const sorted = Object.entries(table).sort((a, b) => Number(a[0]) - Number(b[0]));
+
+      return (
+        <Card className="p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold text-onyx">Lease Mileage Residual Degradation</h3>
+              <p className="text-xs text-silver-dust mt-1">Residual percentage point adjustment from the base (10,000 mi/yr). Positive = higher residual, negative = lower.</p>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="outline" onClick={handleAddRow}>+ Add Mileage</Button>
+              <Button size="sm" onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Save'}</Button>
+            </div>
+          </div>
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-dove">
+                <th className="text-left px-3 py-2 text-xs font-semibold text-silver-dust uppercase">Annual Miles</th>
+                <th className="text-center px-3 py-2 text-xs font-semibold text-silver-dust uppercase">Residual Adjustment (points)</th>
+                <th className="text-center px-3 py-2 text-xs font-semibold text-silver-dust uppercase">Effect</th>
+                <th className="w-16"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map(([miles, pts]) => (
+                <tr key={miles} className="border-b border-dove/50 hover:bg-dove/20">
+                  <td className="px-3 py-2 font-medium">{Number(miles).toLocaleString()} mi/yr</td>
+                  <td className="px-3 py-2 text-center">
+                    <input type="number" value={pts} onChange={e => handleUpdate(miles, e.target.value)}
+                      className="w-20 px-2 py-1 text-center border border-mushroom rounded text-sm" />
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {pts > 0 ? <span className="text-success font-medium">+{pts} pts (higher residual)</span>
+                      : pts < 0 ? <span className="text-flare-red font-medium">{pts} pts (lower residual)</span>
+                      : <span className="text-silver-dust">Base (no adjustment)</span>}
+                  </td>
+                  <td className="px-3 py-2 text-center">
+                    {miles !== '10000' && (
+                      <button onClick={() => handleRemove(miles)} className="text-error text-xs hover:underline">Remove</button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <div className="mt-4 p-3 bg-mushroom-light rounded text-xs text-iron-smoke">
+            <strong>How it works:</strong> The Santander lease file provides residual values at 10,000 mi/yr. When a dealer selects a different annual mileage in the Payment Estimator, these point adjustments are applied to the base residual. For example, if the base residual is 54% and the customer wants 15,000 mi/yr with a -2 point adjustment, the residual becomes 52%.
+          </div>
+        </Card>
+      );
+    }
+
+    // ==================== App Root ====================
+    function App() {
+      const [user, setUser] = React.useState(null);
+      const [loading, setLoading] = React.useState(true);
+      const [page, setPage] = React.useState('dashboard');
+      const [toasts, setToasts] = React.useState([]);
+
+      const toastCtx = {
+        show: (message, type = 'success') => {
+          const id = Date.now();
+          setToasts(t => [...t, { id, message, type }]);
+        },
+        dismiss: (id) => setToasts(t => t.filter(x => x.id !== id)),
+      };
+
+      React.useEffect(() => {
+        if (API.token) {
+          API.get('/auth/me').then(u => { setUser(u); }).catch(() => { API.clearToken(); }).finally(() => setLoading(false));
+        } else {
+          setLoading(false);
+        }
+      }, []);
+
+      function handleLogin(u) {
+        setUser(u);
+        setPage(u.role === 'retailer' ? 'lookup' : 'dashboard');
+      }
+
+      function handleLogout() {
+        API.post('/auth/logout').catch(() => {});
+        API.clearToken();
+        setUser(null);
+      }
+
+      if (loading) return <div className="min-h-screen flex items-center justify-center"><Spinner /></div>;
+      if (!user) return (
+        <ToastContext.Provider value={toastCtx}>
+          <LoginPage onLogin={handleLogin} />
+          {toasts.map(t => <Toast key={t.id} {...t} onClose={() => toastCtx.dismiss(t.id)} />)}
+        </ToastContext.Provider>
+      );
+
+      const pages = { dashboard: DashboardPage, programs: ProgramsPage, codes: CodeMatrixPage, lookup: LookupPage, transactions: TransactionsPage, payfiles: PayFilesPage, settings: SettingsPage };
+      const PageComponent = pages[page] || DashboardPage;
+
+      return (
+        <AuthContext.Provider value={{ user }}>
+        <ToastContext.Provider value={toastCtx}>
+          <div className="flex min-h-screen">
+            <Sidebar user={user} currentPage={page} onNavigate={setPage} onLogout={handleLogout} />
+            <main className="flex-1 p-6 overflow-auto bg-mushroom-light">
+              <PageComponent />
+            </main>
+          </div>
+          {toasts.map(t => <Toast key={t.id} {...t} onClose={() => toastCtx.dismiss(t.id)} />)}
+        </ToastContext.Provider>
+        </AuthContext.Provider>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

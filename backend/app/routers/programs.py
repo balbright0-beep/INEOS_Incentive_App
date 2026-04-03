@@ -1,0 +1,245 @@
+import uuid
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from decimal import Decimal
+from app.database import get_db
+from app.models.program import Program, ProgramRule
+from app.models.budget import Budget, AuditLog
+from app.models.transaction import DealTransaction
+from app.models.campaign_code import CampaignCodeLayer
+from app.schemas.program import ProgramCreate, ProgramUpdate, ProgramResponse
+from app.auth.security import get_current_user, require_admin
+from app.models.user import User
+from app.services.code_matrix import rebuild_matrix
+
+router = APIRouter(prefix="/api/programs", tags=["programs"])
+
+
+def _enrich_program(db: Session, prog: Program) -> dict:
+    """Add computed fields to program response."""
+    # Calculate spend and units
+    code_ids = [l.campaign_code_id for l in db.query(CampaignCodeLayer.campaign_code_id).filter(
+        CampaignCodeLayer.program_id == prog.id
+    ).all()]
+
+    spend = 0.0
+    units = 0
+    if code_ids:
+        result = db.query(
+            func.coalesce(func.sum(DealTransaction.support_amount), 0),
+            func.count(DealTransaction.id),
+        ).filter(DealTransaction.campaign_code.in_(
+            [c.code for c in db.query(
+                __import__('app.models.campaign_code', fromlist=['CampaignCode']).CampaignCode
+            ).filter(
+                __import__('app.models.campaign_code', fromlist=['CampaignCode']).CampaignCode.id.in_(code_ids)
+            ).all()]
+        )).first()
+        if result:
+            spend = float(result[0])
+            units = result[1]
+
+    data = {
+        "id": prog.id,
+        "name": prog.name,
+        "program_type": prog.program_type,
+        "status": prog.status,
+        "effective_date": prog.effective_date,
+        "expiration_date": prog.expiration_date,
+        "budget_amount": float(prog.budget_amount) if prog.budget_amount else None,
+        "budget_units": int(prog.budget_units) if prog.budget_units else None,
+        "description": prog.description,
+        "stacking_category": prog.stacking_category,
+        "per_unit_amount": float(prog.per_unit_amount) if prog.per_unit_amount else 0,
+        "created_by": prog.created_by,
+        "created_at": str(prog.created_at) if prog.created_at else None,
+        "updated_at": str(prog.updated_at) if prog.updated_at else None,
+        "rules": [{"id": r.id, "rule_type": r.rule_type, "operator": r.operator, "value": r.value}
+                  for r in prog.rules],
+        "budgets": [{"id": b.id, "period": b.period,
+                     "allocated_amount": float(b.allocated_amount),
+                     "allocated_units": int(b.allocated_units) if b.allocated_units else None}
+                    for b in prog.budgets],
+        "spend_to_date": spend,
+        "units_to_date": units,
+    }
+    return data
+
+
+@router.get("")
+def list_programs(
+    status: str = Query(None),
+    program_type: str = Query(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    q = db.query(Program)
+    if status:
+        q = q.filter(Program.status == status)
+    if program_type:
+        q = q.filter(Program.program_type == program_type)
+    programs = q.order_by(Program.created_at.desc()).all()
+    return [_enrich_program(db, p) for p in programs]
+
+
+@router.post("")
+def create_program(
+    req: ProgramCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    prog = Program(
+        name=req.name,
+        program_type=req.program_type,
+        status="draft",
+        effective_date=req.effective_date,
+        expiration_date=req.expiration_date,
+        description=req.description,
+        budget_amount=Decimal(str(req.budget_amount)) if req.budget_amount else None,
+        budget_units=req.budget_units,
+        per_unit_amount=Decimal(str(req.per_unit_amount)) if req.per_unit_amount else Decimal("0"),
+        stacking_category=req.stacking_category or req.program_type,
+        created_by=user.id,
+    )
+    db.add(prog)
+    db.flush()
+
+    for rule in req.rules:
+        db.add(ProgramRule(
+            program_id=prog.id,
+            rule_type=rule.rule_type,
+            operator=rule.operator,
+            value=rule.value,
+        ))
+
+    db.add(AuditLog(
+        entity_type="program", entity_id=prog.id,
+        action="created", user_id=user.id,
+    ))
+    db.commit()
+    return _enrich_program(db, prog)
+
+
+@router.get("/{program_id}")
+def get_program(program_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    return _enrich_program(db, prog)
+
+
+@router.put("/{program_id}")
+def update_program(
+    program_id: str,
+    req: ProgramUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    update_data = req.model_dump(exclude_unset=True)
+    rules_data = update_data.pop("rules", None)
+
+    for key, val in update_data.items():
+        if key in ("budget_amount", "per_unit_amount") and val is not None:
+            val = Decimal(str(val))
+        setattr(prog, key, val)
+
+    if rules_data is not None:
+        db.query(ProgramRule).filter(ProgramRule.program_id == prog.id).delete()
+        for rule in rules_data:
+            db.add(ProgramRule(
+                program_id=prog.id,
+                rule_type=rule.rule_type,
+                operator=rule.operator,
+                value=rule.value,
+            ))
+
+    db.add(AuditLog(
+        entity_type="program", entity_id=prog.id,
+        action="updated", user_id=user.id, details=update_data,
+    ))
+    db.commit()
+    return _enrich_program(db, prog)
+
+
+@router.post("/{program_id}/activate")
+def activate_program(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    prog.status = "active"
+    db.add(AuditLog(
+        entity_type="program", entity_id=prog.id,
+        action="activated", user_id=user.id,
+    ))
+    db.commit()
+
+    # Rebuild code matrix
+    matrix = rebuild_matrix(db)
+    return {"message": "Program activated", "codes_generated": len(matrix)}
+
+
+@router.post("/{program_id}/clone")
+def clone_program(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    new_prog = Program(
+        name=f"{prog.name} (Copy)",
+        program_type=prog.program_type,
+        status="draft",
+        effective_date=prog.effective_date,
+        expiration_date=prog.expiration_date,
+        description=prog.description,
+        budget_amount=prog.budget_amount,
+        budget_units=prog.budget_units,
+        per_unit_amount=prog.per_unit_amount,
+        stacking_category=prog.stacking_category,
+        created_by=user.id,
+    )
+    db.add(new_prog)
+    db.flush()
+
+    for rule in prog.rules:
+        db.add(ProgramRule(
+            program_id=new_prog.id,
+            rule_type=rule.rule_type,
+            operator=rule.operator,
+            value=rule.value,
+        ))
+
+    db.commit()
+    return _enrich_program(db, new_prog)
+
+
+@router.delete("/{program_id}")
+def delete_program(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if prog.status == "active":
+        raise HTTPException(status_code=400, detail="Cannot delete an active program. Cancel it first.")
+    db.add(AuditLog(
+        entity_type="program", entity_id=prog.id,
+        action="deleted", user_id=user.id,
+    ))
+    db.delete(prog)
+    db.commit()
+    return {"message": "Program deleted"}
