@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-variant="manual" data-theme="light">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -41,8 +41,22 @@
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
   <style>
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-    * { font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+    * { font-family: 'PPNeueMontreal', 'Inter', system-ui, -apple-system, sans-serif; }
     body { background: #FAFAF9; margin: 0; }
+    /* ── INEOS HUB display treatment ── */
+    h1, .hub-display {
+      font-family: 'Formula4x4', 'Arial Black', sans-serif !important;
+      letter-spacing: 0.02em !important;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    /* Uppercase eyebrow for sidebar section labels */
+    .hub-eyebrow-inc {
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-size: 10px;
+    }
     .scrollbar-thin::-webkit-scrollbar { width: 6px; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: #D9D7D0; border-radius: 3px; }
     .toast { animation: slideIn 0.3s ease-out; }
