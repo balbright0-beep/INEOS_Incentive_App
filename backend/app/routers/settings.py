@@ -195,6 +195,33 @@ def get_quick_reference(db: Session = Depends(get_db), user: User = Depends(get_
     return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
 
 
+@router.get("/public/bulletin/{program_id}")
+def get_public_bulletin(program_id: str, db: Session = Depends(get_db)):
+    """
+    Retailer-facing PDF download. Same generator as the admin route,
+    gated to live programs only \u2014 a 404 for drafts and staged programs
+    so an unauthenticated visitor can't pull a doc for something that
+    isn't customer-facing yet.
+    """
+    from app.models.program import Program
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog or prog.status != "active" or not getattr(prog, "published", False):
+        raise HTTPException(status_code=404, detail="Program not found or not yet live")
+    filepath = generate_program_bulletin(db, program_id)
+    return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+
+
+@router.get("/public/quick-reference")
+def get_public_quick_reference(db: Session = Depends(get_db)):
+    """
+    Retailer-facing quick reference card. Generator pulls from active
+    programs by default; the gating happens upstream when admins decide
+    which programs to publish.
+    """
+    filepath = generate_quick_reference_card(db)
+    return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+
+
 # --- Vehicle Inventory (Master File) ---
 @router.post("/vehicles/import")
 async def import_vehicles(

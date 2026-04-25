@@ -184,6 +184,126 @@
       .layout { flex-direction: column; }
       .layout > div { width: 100% !important; }
     }
+
+    /* ─── Tab navigation ─── */
+    .tab-nav {
+      background: #fff;
+      border-bottom: 1px solid #E9E8E5;
+      padding: 0 24px;
+    }
+    .tab-nav-inner {
+      max-width: 1200px;
+      margin: 0 auto;
+      display: flex;
+      gap: 4px;
+      overflow-x: auto;
+    }
+    .tab-link {
+      padding: 14px 18px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11.5px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #606060;
+      text-decoration: none;
+      border-bottom: 2px solid transparent;
+      white-space: nowrap;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .tab-link:hover { color: #1D1D1D; }
+    .tab-link.active { color: #FF4639; border-bottom-color: #FF4639; }
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; animation: fadeIn 0.2s ease-out; }
+
+    /* ─── Data tables (used on Programs / Codes tabs) ─── */
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 12px 14px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10.5px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #606060;
+      background: #FAFAF9;
+      border-bottom: 1px solid #E9E8E5;
+      white-space: nowrap;
+    }
+    .data-table td {
+      padding: 12px 14px;
+      border-bottom: 1px solid #F1F0EC;
+      color: #1D1D1D;
+      vertical-align: top;
+    }
+    .data-table tr:last-child td { border-bottom: none; }
+    .data-table tr:hover td { background: #FAFAF9; }
+    .data-table .mono { font-family: 'JetBrains Mono', monospace; font-size: 12.5px; }
+    .data-table .num { text-align: right; font-family: 'JetBrains Mono', monospace; }
+    .filter-bar {
+      display: flex; gap: 8px; flex-wrap: wrap;
+      padding: 12px 14px;
+      background: #FAFAF9;
+      border-bottom: 1px solid #E9E8E5;
+      align-items: center;
+    }
+    .filter-bar input, .filter-bar select {
+      padding: 6px 10px;
+      border: 1px solid #E9E8E5;
+      border-radius: 4px;
+      font-size: 12.5px;
+      background: #fff;
+    }
+    .pill-tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 10px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      background: #F1F0EC;
+      color: #606060;
+      margin-right: 4px;
+    }
+    .pill-tag.flag-loyalty { background: #EEF4FB; color: #1D3F7A; }
+    .pill-tag.flag-conquest { background: #F4EEFB; color: #4B1D7A; }
+    .doc-card {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      padding: 16px 18px;
+      background: #fff;
+      border: 1px solid #E9E8E5;
+      border-radius: 4px;
+      margin-bottom: 10px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .doc-card:hover { border-color: #FF4639; box-shadow: 0 4px 12px rgba(0,0,0,0.04); }
+    .doc-card h4 { margin: 0 0 4px; font-size: 14px; color: #1D1D1D; }
+    .doc-card .meta { font-size: 11.5px; color: #606060; }
+    .download-btn {
+      padding: 8px 14px;
+      background: #1D1D1D;
+      color: #fff;
+      text-decoration: none;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      border-radius: 4px;
+      white-space: nowrap;
+    }
+    .download-btn:hover { background: #FF4639; }
+    .panel-loading, .panel-empty {
+      padding: 60px 24px;
+      text-align: center;
+      color: #9F9F9F;
+      font-size: 13px;
+    }
   </style>
 </head>
 <body>
@@ -209,7 +329,17 @@
     </div>
   </div>
 
+  <nav class="tab-nav">
+    <div class="tab-nav-inner">
+      <a href="#find"     class="tab-link" data-tab="find">Find Incentive</a>
+      <a href="#programs" class="tab-link" data-tab="programs">Live Programs</a>
+      <a href="#codes"    class="tab-link" data-tab="codes">Campaign Codes</a>
+      <a href="#docs"     class="tab-link" data-tab="docs">Program Documents</a>
+    </div>
+  </nav>
+
   <main style="max-width:1200px;margin:0 auto;padding:32px 24px 48px">
+    <section id="tab-find" class="tab-panel">
     <div style="margin-bottom:24px">
       <h1 style="font-size:28px;color:#1D1D1D;margin:0">Find Your Incentive</h1>
       <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:680px">
@@ -322,10 +452,60 @@
         </div>
       </div>
     </div>
+    </section>
+
+    <!-- ─── Live Programs tab ─── -->
+    <section id="tab-programs" class="tab-panel">
+      <div style="margin-bottom:18px">
+        <h1 style="font-size:28px;color:#1D1D1D;margin:0">Live Programs</h1>
+        <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:720px">
+          Every program currently active and visible on the public lookup. Use this as a one-page summary of what retail
+          customers can take advantage of right now. Staged or draft programs are intentionally not shown.
+        </p>
+      </div>
+      <div class="card" id="programs-panel">
+        <div class="panel-loading">Loading programs\u2026</div>
+      </div>
+    </section>
+
+    <!-- ─── Campaign Codes tab ─── -->
+    <section id="tab-codes" class="tab-panel">
+      <div style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap">
+        <div>
+          <h1 style="font-size:28px;color:#1D1D1D;margin:0">Campaign Codes</h1>
+          <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:720px">
+            Every active SAP-entry campaign code with its layer-by-layer build-up. Use the search box to narrow by code,
+            body style, model year, or deal type. Hit Download Extract for an Excel copy.
+          </p>
+        </div>
+        <a id="codes-export-btn" class="download-btn" href="/api/codes/public/export" download>\u2193 Download Extract (.xlsx)</a>
+      </div>
+      <div class="card" id="codes-panel">
+        <div class="panel-loading">Loading codes\u2026</div>
+      </div>
+    </section>
+
+    <!-- ─── Program Documents tab ─── -->
+    <section id="tab-docs" class="tab-panel">
+      <div style="margin-bottom:18px;display:flex;justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap">
+        <div>
+          <h1 style="font-size:28px;color:#1D1D1D;margin:0">Program Documents</h1>
+          <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:720px">
+            One-page program bulletins for every live program, plus a consolidated quick-reference card covering all
+            current support across body styles and deal types. Use these as the source of truth for retail customer
+            conversations.
+          </p>
+        </div>
+        <a class="download-btn" href="/api/settings/public/quick-reference" download>\u2193 Quick Reference Card</a>
+      </div>
+      <div id="docs-panel">
+        <div class="panel-loading">Loading documents\u2026</div>
+      </div>
+    </section>
 
     <footer style="margin-top:48px;padding-top:24px;border-top:1px solid #E9E8E5;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;align-items:center">
-      <div class="eyebrow">INEOS Automotive · United States</div>
-      <button id="share-btn" type="button" style="background:none;border:1px solid #E9E8E5;color:#1D1D1D;padding:8px 14px;border-radius:4px;font-size:12px;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;cursor:pointer">↗ Copy Shareable Link</button>
+      <div class="eyebrow">INEOS Automotive \u00b7 United States</div>
+      <button id="share-btn" type="button" style="background:none;border:1px solid #E9E8E5;color:#1D1D1D;padding:8px 14px;border-radius:4px;font-size:12px;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;cursor:pointer">\u2197 Copy Shareable Link</button>
     </footer>
   </main>
 
@@ -560,7 +740,7 @@
 
     // ───────────── Share button ─────────────
     $('share-btn').addEventListener('click', async () => {
-      const url = location.origin + location.pathname;
+      const url = location.origin + location.pathname + location.hash;
       try {
         await navigator.clipboard.writeText(url);
         toast('Shareable link copied to clipboard');
@@ -568,6 +748,200 @@
         prompt('Copy this link:', url);
       }
     });
+
+    // ───────────── Tab routing ─────────────
+    // Hash-based — /lookup/#programs, /lookup/#codes, /lookup/#docs.
+    // Each tab lazy-loads its data on first show, then caches in memory
+    // so flipping back is instant. Preserves ?preview=1 across tabs by
+    // virtue of using the existing query string (we never rewrite it).
+    const TAB_IDS = ['find', 'programs', 'codes', 'docs'];
+    const _tabLoaded = { find: true, programs: false, codes: false, docs: false };
+
+    function activateTab(name) {
+      if (!TAB_IDS.includes(name)) name = 'find';
+      TAB_IDS.forEach(id => {
+        const panel = document.getElementById('tab-' + id);
+        const link  = document.querySelector(`.tab-link[data-tab="${id}"]`);
+        if (panel) panel.classList.toggle('active', id === name);
+        if (link)  link.classList.toggle('active', id === name);
+      });
+      if (name === 'programs' && !_tabLoaded.programs) loadPrograms();
+      if (name === 'codes'    && !_tabLoaded.codes)    loadCodes();
+      if (name === 'docs'     && !_tabLoaded.docs)     loadDocs();
+      // Smooth scroll back to top so a long tab content doesn't leave
+      // the user buried mid-page on switch.
+      window.scrollTo({ top: 0, behavior: 'instant' });
+    }
+    function tabFromHash() {
+      const h = (location.hash || '').replace(/^#/, '');
+      return TAB_IDS.includes(h) ? h : 'find';
+    }
+    window.addEventListener('hashchange', () => activateTab(tabFromHash()));
+    activateTab(tabFromHash());
+
+    // When in admin preview mode, all the public tabs need to point at
+    // the authenticated endpoints too — otherwise Programs/Codes/Docs
+    // would silently show only the live build, which defeats the point
+    // of being on /lookup/?preview=1. Programs and Codes lists also
+    // gain an Authorization header. Bulletin / quick-reference PDFs
+    // are <a href> downloads though, so we can't attach a header —
+    // those stay on the public endpoints (gated to live programs)
+    // and admins use the SPA's PDF buttons for staged docs.
+    const PROGRAMS_LIST_URL = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/programs?status=active' : '/api/programs/public';
+    const CODES_LIST_URL    = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/codes?active=true'      : '/api/codes/public';
+    const CODES_EXPORT_URL  = '/api/codes/public/export';
+
+    function authHeaders() {
+      return (PREVIEW_MODE && ADMIN_TOKEN) ? { 'Authorization': 'Bearer ' + ADMIN_TOKEN } : {};
+    }
+
+    // ───────────── Live Programs tab ─────────────
+    async function loadPrograms() {
+      _tabLoaded.programs = true;
+      const panel = $('programs-panel');
+      try {
+        const r = await fetch(PROGRAMS_LIST_URL, { headers: authHeaders() });
+        if (!r.ok) throw new Error('Failed to load programs (' + r.status + ')');
+        const progs = await r.json();
+        if (!progs.length) {
+          panel.innerHTML = '<div class="panel-empty">No live programs at the moment. Check back after the next monthly publish.</div>';
+          return;
+        }
+        // Index program rules so the table can show key constraints
+        // (model year, body style, state) inline without a click-through.
+        const ruleSummary = (rules) => {
+          const parts = [];
+          for (const r of (rules || [])) {
+            const v = Array.isArray(r.value) ? r.value.join(', ') : r.value;
+            if (r.rule_type === 'model_year' && v) parts.push(`MY ${v}`);
+            else if (r.rule_type === 'body_style' && v) parts.push(String(v).replace('_', ' '));
+            else if (r.rule_type === 'trim' && v) parts.push(`Trim: ${v}`);
+            else if (r.rule_type === 'state' && v) parts.push(`State: ${v}`);
+            else if (r.rule_type === 'finance_type' && v) parts.push(`${v}`);
+          }
+          return parts.length ? parts.map(p => `<span class="pill-tag">${escapeHtml(String(p))}</span>`).join('') : '<span style="color:#9F9F9F">\u2014</span>';
+        };
+        const rows = progs.map(p => `
+          <tr>
+            <td><b>${escapeHtml(p.name)}</b>${p.description ? `<div style="font-size:11px;color:#9F9F9F;margin-top:2px">${escapeHtml(p.description)}</div>` : ''}</td>
+            <td><span class="pill-tag">${escapeHtml((p.program_type || '').replace('_', ' '))}</span></td>
+            <td class="mono">${escapeHtml(p.effective_date || '\u2014')} \u2192 ${escapeHtml(p.expiration_date || '\u2014')}</td>
+            <td>${ruleSummary(p.rules)}</td>
+            <td class="num">${fmtMoney(p.per_unit_amount)}</td>
+          </tr>`).join('');
+        panel.innerHTML = `
+          <table class="data-table">
+            <thead><tr><th>Program</th><th>Type</th><th>Effective</th><th>Constraints</th><th class="num">Per Unit</th></tr></thead>
+            <tbody>${rows}</tbody>
+          </table>`;
+      } catch (e) {
+        panel.innerHTML = `<div class="panel-empty" style="color:#CC0200">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // ───────────── Campaign Codes tab ─────────────
+    let _codesCache = [];
+    async function loadCodes() {
+      _tabLoaded.codes = true;
+      const panel = $('codes-panel');
+      try {
+        const r = await fetch(CODES_LIST_URL, { headers: authHeaders() });
+        if (!r.ok) throw new Error('Failed to load codes (' + r.status + ')');
+        _codesCache = await r.json();
+        if (!_codesCache.length) {
+          panel.innerHTML = '<div class="panel-empty">No active campaign codes.</div>';
+          return;
+        }
+        renderCodes();
+      } catch (e) {
+        panel.innerHTML = `<div class="panel-empty" style="color:#CC0200">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function renderCodes() {
+      const panel = $('codes-panel');
+      const search = ($('codes-search')?.value || '').toLowerCase();
+      const filtered = _codesCache.filter(c => {
+        if (!search) return true;
+        const hay = [c.code, c.body_style, c.model_year, c.trim, c.deal_type, (c.layers||[]).map(l=>l.program_name).join(' ')]
+          .join(' ').toLowerCase();
+        return hay.includes(search);
+      });
+      const flagPills = (c) => {
+        const out = [];
+        if (c.loyalty_flag)  out.push('<span class="pill-tag flag-loyalty">Loyalty</span>');
+        if (c.conquest_flag) out.push('<span class="pill-tag flag-conquest">Conquest</span>');
+        if (c.special_flag)  out.push(`<span class="pill-tag">${escapeHtml(c.special_flag)}</span>`);
+        return out.join('') || '<span style="color:#9F9F9F">\u2014</span>';
+      };
+      const layerCell = (layers) => (layers || []).map(l =>
+        `<div style="display:flex;justify-content:space-between;gap:10px;padding:1px 0"><span style="color:#606060">${escapeHtml(l.program_name)}</span><span class="mono" style="color:#1D1D1D">${fmtMoney(l.layer_amount)}</span></div>`
+      ).join('') || '<span style="color:#9F9F9F">\u2014</span>';
+      const rows = filtered.map(c => `
+        <tr>
+          <td class="mono"><b>${escapeHtml(c.code)}</b></td>
+          <td>${escapeHtml((c.body_style || '').replace('_', ' '))}<div style="font-size:11px;color:#9F9F9F">${escapeHtml(c.model_year || '')}${c.trim ? ' \u00b7 ' + escapeHtml(c.trim) : ''}</div></td>
+          <td>${escapeHtml((c.deal_type || '').toUpperCase())}</td>
+          <td>${flagPills(c)}</td>
+          <td style="min-width:240px">${layerCell(c.layers)}</td>
+          <td class="num"><b>${fmtMoney(c.support_amount)}</b></td>
+        </tr>`).join('');
+      panel.innerHTML = `
+        <div class="filter-bar">
+          <input id="codes-search" type="search" placeholder="Search code, body, year, trim, program\u2026" style="flex:1;min-width:240px" oninput="renderCodes()">
+          <span style="font-size:11px;color:#9F9F9F;font-family:'JetBrains Mono',monospace">${filtered.length} of ${_codesCache.length} codes</span>
+        </div>
+        <table class="data-table">
+          <thead><tr><th>Code</th><th>Vehicle</th><th>Deal</th><th>Flags</th><th>Layers</th><th class="num">Total</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="6" class="panel-empty">No matches.</td></tr>'}</tbody>
+        </table>`;
+      // Re-bind the input value after rerender so typing isn't disrupted
+      const inp = $('codes-search');
+      if (inp) { inp.value = search; inp.focus(); inp.setSelectionRange(search.length, search.length); }
+    }
+    window.renderCodes = renderCodes;
+
+    // ───────────── Program Documents tab ─────────────
+    async function loadDocs() {
+      _tabLoaded.docs = true;
+      const panel = $('docs-panel');
+      try {
+        // Reuse the programs endpoint — every live program gets a
+        // bulletin row with a download link to the public bulletin
+        // PDF. Cheaper than a dedicated endpoint and stays in sync
+        // with whatever's actually live.
+        const r = await fetch(PROGRAMS_LIST_URL, { headers: authHeaders() });
+        if (!r.ok) throw new Error('Failed to load programs (' + r.status + ')');
+        const progs = await r.json();
+        if (!progs.length) {
+          panel.innerHTML = '<div class="panel-empty">No program documents available \u2014 no live programs yet.</div>';
+          return;
+        }
+        // In preview mode, the SPA's auth token isn't usable for the
+        // bulletin endpoint via plain <a download>, so admins viewing
+        // staged programs in preview see live-only PDFs here. That's
+        // intentional: docs trail publish, not stage.
+        const cards = progs.map(p => `
+          <div class="doc-card">
+            <div style="flex:1;min-width:0">
+              <h4>${escapeHtml(p.name)}</h4>
+              <div class="meta">
+                <span class="pill-tag">${escapeHtml((p.program_type || '').replace('_', ' '))}</span>
+                <span style="margin-left:6px">Effective ${escapeHtml(p.effective_date || '\u2014')} \u2192 ${escapeHtml(p.expiration_date || '\u2014')}</span>
+                <span style="margin-left:6px;color:#1D1D1D">${fmtMoney(p.per_unit_amount)} per unit</span>
+              </div>
+            </div>
+            <a class="download-btn" href="/api/settings/public/bulletin/${encodeURIComponent(p.id)}" download>\u2193 Bulletin (PDF)</a>
+          </div>`).join('');
+        panel.innerHTML = `
+          <div style="margin-bottom:6px;font-size:11px;color:#9F9F9F;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">
+            ${progs.length} bulletin${progs.length === 1 ? '' : 's'} available
+          </div>
+          ${cards}`;
+      } catch (e) {
+        panel.innerHTML = `<div class="panel-empty" style="color:#CC0200">${escapeHtml(e.message)}</div>`;
+      }
+    }
   </script>
 </body>
 </html>

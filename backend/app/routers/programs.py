@@ -76,6 +76,38 @@ def _enrich_program(db: Session, prog: Program) -> dict:
     return data
 
 
+@router.get("/public")
+def list_public_programs(db: Session = Depends(get_db)):
+    """
+    Live program summary for the retailer-facing finder. No auth.
+    Returns the same fields a retailer needs to understand the offer
+    (name, type, dates, per-unit amount, rules, description) and
+    deliberately omits internal-only fields like spend-to-date,
+    budget caps, and creator id.
+    """
+    progs = db.query(Program).filter(
+        Program.status == "active",
+        Program.published == True,  # noqa: E712
+    ).order_by(Program.effective_date.desc(), Program.name).all()
+    return [
+        {
+            "id": p.id,
+            "name": p.name,
+            "program_type": p.program_type,
+            "effective_date": p.effective_date.isoformat() if p.effective_date else None,
+            "expiration_date": p.expiration_date.isoformat() if p.expiration_date else None,
+            "description": p.description,
+            "stacking_category": p.stacking_category,
+            "per_unit_amount": float(p.per_unit_amount or 0),
+            "rules": [
+                {"rule_type": r.rule_type, "operator": r.operator, "value": r.value}
+                for r in p.rules
+            ],
+        }
+        for p in progs
+    ]
+
+
 @router.get("")
 def list_programs(
     status: str = Query(None),

@@ -46,6 +46,56 @@ HEADER_ALIGNMENT = Alignment(horizontal="center", vertical="center", wrap_text=T
 router = APIRouter(prefix="/api/codes", tags=["codes"])
 
 
+@router.get("/public")
+def list_public_codes(db: Session = Depends(get_db)):
+    """
+    Public listing of active campaign codes for the retailer finder.
+    Filters out any code with at least one staged (unpublished)
+    contributing program, mirroring the gate in lookup_incentive so
+    customers never see a number admins haven't signed off on.
+    """
+    codes = db.query(CampaignCode).filter(CampaignCode.active == True).order_by(
+        CampaignCode.body_style, CampaignCode.model_year, CampaignCode.deal_type,
+        CampaignCode.conquest_flag, CampaignCode.loyalty_flag
+    ).all()
+    out = []
+    for c in codes:
+        layers = (
+            db.query(CampaignCodeLayer, Program)
+            .join(Program, CampaignCodeLayer.program_id == Program.id)
+            .filter(CampaignCodeLayer.campaign_code_id == c.id)
+            .all()
+        )
+        if not layers:
+            continue
+        if not all(getattr(prog, "published", False) for _, prog in layers):
+            continue
+        out.append({
+            "id": c.id,
+            "code": c.code,
+            "label": c.label,
+            "body_style": c.body_style,
+            "model_year": c.model_year,
+            "trim": c.trim,
+            "deal_type": c.deal_type,
+            "loyalty_flag": bool(c.loyalty_flag),
+            "conquest_flag": bool(c.conquest_flag),
+            "special_flag": c.special_flag,
+            "support_amount": float(c.support_amount or 0),
+            "effective_date": c.effective_date.isoformat() if c.effective_date else None,
+            "expiration_date": c.expiration_date.isoformat() if c.expiration_date else None,
+            "layers": [
+                {
+                    "program_name": prog.name,
+                    "program_type": prog.program_type,
+                    "layer_amount": float(layer.layer_amount),
+                }
+                for layer, prog in layers
+            ],
+        })
+    return out
+
+
 @router.get("")
 def list_codes(
     model_year: str = Query(None),
@@ -186,6 +236,21 @@ def _vehicle_label(code):
 
 @router.get("/export")
 def export_codes(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    return _build_codes_xlsx(db, published_only=False)
+
+
+@router.get("/public/export")
+def export_public_codes(db: Session = Depends(get_db)):
+    """
+    Excel extract for the retailer-facing finder. Same shape as the
+    admin export; codes whose contributing programs are all live
+    (published=True) only \u2014 staged programs are filtered out so the
+    download always matches what the public lookup is showing.
+    """
+    return _build_codes_xlsx(db, published_only=True)
+
+
+def _build_codes_xlsx(db: Session, published_only: bool = False):
     codes = db.query(CampaignCode).filter(CampaignCode.active == True).order_by(
         CampaignCode.body_style, CampaignCode.model_year, CampaignCode.deal_type,
         CampaignCode.conquest_flag, CampaignCode.loyalty_flag
@@ -201,6 +266,15 @@ def export_codes(db: Session = Depends(get_db), user: User = Depends(get_current
             .all()
         )
         code_layers[c.id] = layers
+
+    # Public extract gates on every contributing program being published.
+    # Codes with any staged layer are dropped entirely; we don't render a
+    # partial breakdown because the totals would be misleading.
+    if published_only:
+        codes = [
+            c for c in codes
+            if code_layers.get(c.id) and all(getattr(prog, "published", False) for _, prog in code_layers[c.id])
+        ]
 
     # Get date range from active programs
     active_programs = db.query(Program).filter(Program.status == "active").all()
