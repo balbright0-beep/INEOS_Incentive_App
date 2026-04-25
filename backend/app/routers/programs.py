@@ -181,8 +181,21 @@ def update_program(
     if not prog:
         raise HTTPException(status_code=404, detail="Program not found")
 
+    # Two views of the payload:
+    #   update_data    — Python types (date objects, Decimals after the
+    #                    coerce loop), used for setattr against the
+    #                    SQLAlchemy columns.
+    #   audit_details  — JSON-mode dump (dates → ISO strings), used as
+    #                    the AuditLog.details payload because that
+    #                    column is JSON and Python's default encoder
+    #                    can't serialize date. Without this the PUT
+    #                    blew up with "Object of type date is not JSON
+    #                    serializable" → 500 → SPA "Internal Server
+    #                    Error" toast.
     update_data = req.model_dump(exclude_unset=True)
     rules_data = update_data.pop("rules", None)
+    audit_details = req.model_dump(exclude_unset=True, mode="json")
+    audit_details.pop("rules", None)
 
     for key, val in update_data.items():
         if key in ("budget_amount", "per_unit_amount") and val is not None:
@@ -201,7 +214,7 @@ def update_program(
 
     db.add(AuditLog(
         entity_type="program", entity_id=prog.id,
-        action="updated", user_id=user.id, details=update_data,
+        action="updated", user_id=user.id, details=audit_details,
     ))
     db.commit()
     return _enrich_program(db, prog)
