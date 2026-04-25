@@ -436,6 +436,9 @@
       const [programs, setPrograms] = React.useState([]);
       const [loading, setLoading] = React.useState(true);
       const [showCreate, setShowCreate] = React.useState(false);
+      // Editing reuses the same wizard, just with a program pre-loaded.
+      // null = wizard closed; an object = wizard open in edit mode.
+      const [editProgram, setEditProgram] = React.useState(null);
       const [filter, setFilter] = React.useState('all');
 
       const load = () => API.get('/programs').then(setPrograms).finally(() => setLoading(false));
@@ -553,7 +556,9 @@
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filtered.map(p => (
-              <Card key={p.id} className="p-5">
+              <Card key={p.id} className="p-5 cursor-pointer hover:border-flare-red/40 transition-colors"
+                onClick={() => user.role === 'admin' && setEditProgram(p)}
+                title={user.role === 'admin' ? 'Click to edit program details' : ''}>
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="font-semibold text-onyx text-sm">{p.name}</h3>
@@ -575,7 +580,10 @@
                   <p>{p.units_to_date || 0} units claimed</p>
                 </div>
                 {user.role === 'admin' && (
-                  <div className="flex gap-2 pt-3 border-t border-dove flex-wrap">
+                  // stopPropagation on every action so a click on Stage,
+                  // Clone, PDF, or Delete doesn't also fire the card-
+                  // level "open edit modal" handler underneath.
+                  <div className="flex gap-2 pt-3 border-t border-dove flex-wrap" onClick={e => e.stopPropagation()}>
                     {/* Stage is the only per-program lifecycle action.
                         Publish / Unpublish were intentionally removed —
                         all promotion to live happens via the master
@@ -592,6 +600,7 @@
             ))}
           </div>
           {showCreate && <ProgramCreateModal onClose={() => { setShowCreate(false); load(); }} />}
+          {editProgram && <ProgramCreateModal editProgram={editProgram} onClose={() => { setEditProgram(null); load(); }} />}
         </div>
       );
     }
@@ -620,23 +629,74 @@
       );
     }
 
-    function ProgramCreateModal({ onClose }) {
+    // Convert a saved program's rules array (the API shape) back into
+    // the wizard's per-rule-type selections. Inverse of buildRules().
+    // Used by edit mode so opening a program shows what's currently
+    // configured rather than the create-mode defaults.
+    function programRulesToForm(rules) {
+      const out = {
+        body_styles: [], model_years: [], trims: [], finance_types: [],
+        regions: [], states: [], special_editions: [],
+      };
+      const map = {
+        body_style: 'body_styles', model_year: 'model_years', trim: 'trims',
+        finance_type: 'finance_types', region: 'regions', state: 'states',
+        special_edition: 'special_editions',
+      };
+      for (const r of (rules || [])) {
+        const key = map[r.rule_type];
+        if (!key) continue;
+        out[key] = Array.isArray(r.value) ? r.value : [r.value];
+      }
+      return out;
+    }
+
+    function ProgramCreateModal({ onClose, editProgram }) {
       const toast = React.useContext(ToastContext);
+      const isEdit = !!editProgram;
       const [step, setStep] = React.useState(1);
-      const [form, setForm] = React.useState({
-        name: '', program_type: 'customer_cash', effective_date: '2026-04-01', expiration_date: '2026-04-30',
-        description: '', budget_amount: '', per_unit_amount: '',
-        // Eligibility selections (converted to rules on save)
-        body_styles: ['station_wagon', 'quartermaster'],
-        model_years: ['MY25', 'MY26'],
-        trims: [],
-        finance_types: [],
-        regions: [],
-        states: [],
-        special_editions: [],
-        // Stacking (auto-populated from type, admin can override)
-        stackable_with: ['loyalty','conquest','friends_family','santander_standard'],
-        not_stackable_with: ['lease_subvention','apr_subvention','cvp'],
+      const [form, setForm] = React.useState(() => {
+        if (isEdit) {
+          // Hydrate from the saved program. Keep the rule-derived
+          // selections as-is (no defaults) so the admin sees exactly
+          // what's persisted; if a field is empty in the DB, it shows
+          // empty here. Stacking selections still default by type
+          // since they aren't persisted on the program directly.
+          const ruleSel = programRulesToForm(editProgram.rules);
+          return {
+            name: editProgram.name || '',
+            program_type: editProgram.program_type || 'customer_cash',
+            effective_date: editProgram.effective_date || '',
+            expiration_date: editProgram.expiration_date || '',
+            description: editProgram.description || '',
+            budget_amount: editProgram.budget_amount != null ? String(editProgram.budget_amount) : '',
+            per_unit_amount: editProgram.per_unit_amount != null ? String(editProgram.per_unit_amount) : '',
+            body_styles: ruleSel.body_styles.length ? ruleSel.body_styles : ['station_wagon', 'quartermaster'],
+            model_years: ruleSel.model_years.length ? ruleSel.model_years : ['MY25', 'MY26'],
+            trims: ruleSel.trims,
+            finance_types: ruleSel.finance_types,
+            regions: ruleSel.regions,
+            states: ruleSel.states,
+            special_editions: ruleSel.special_editions,
+            stackable_with: ['loyalty','conquest','friends_family','santander_standard'],
+            not_stackable_with: ['lease_subvention','apr_subvention','cvp'],
+          };
+        }
+        return {
+          name: '', program_type: 'customer_cash', effective_date: '2026-04-01', expiration_date: '2026-04-30',
+          description: '', budget_amount: '', per_unit_amount: '',
+          // Eligibility selections (converted to rules on save)
+          body_styles: ['station_wagon', 'quartermaster'],
+          model_years: ['MY25', 'MY26'],
+          trims: [],
+          finance_types: [],
+          regions: [],
+          states: [],
+          special_editions: [],
+          // Stacking (auto-populated from type, admin can override)
+          stackable_with: ['loyalty','conquest','friends_family','santander_standard'],
+          not_stackable_with: ['lease_subvention','apr_subvention','cvp'],
+        };
       });
       const [saving, setSaving] = React.useState(false);
 
@@ -658,6 +718,9 @@
 
       const prevTypeRef = React.useRef(form.program_type);
       React.useEffect(() => {
+        // Skip the first effect run in edit mode — we don't want to
+        // clobber the type the admin already saved with stacking
+        // defaults just because the modal mounted.
         if (prevTypeRef.current !== form.program_type) {
           prevTypeRef.current = form.program_type;
           const defaults = STACKING_DEFAULTS[form.program_type] || { stackable: [], not_stackable: [] };
@@ -707,8 +770,13 @@
             per_unit_amount: form.per_unit_amount ? parseFloat(form.per_unit_amount) : 0,
             rules: buildRules(),
           };
-          await API.post('/programs', payload);
-          toast.show('Program created');
+          if (isEdit) {
+            await API.put(`/programs/${editProgram.id}`, payload);
+            toast.show('Program updated');
+          } else {
+            await API.post('/programs', payload);
+            toast.show('Program created');
+          }
           onClose();
         } catch (e) { toast.show(e.message, 'error'); }
         finally { setSaving(false); }
@@ -801,7 +869,7 @@
       const summaryText = summaryParts.length > 0 ? summaryParts.join(' · ') : 'All vehicles eligible';
 
       return (
-        <Modal open={true} onClose={onClose} title={`Create Program — Step ${step} of 4`} wide>
+        <Modal open={true} onClose={onClose} title={`${isEdit ? 'Edit' : 'Create'} Program — Step ${step} of 4`} wide>
           {step === 1 && (
             <div className="space-y-4">
               <Input label="Program Name" value={form.name} onChange={e => update('name', e.target.value)} placeholder="e.g., April 2026 Customer Cash" />
@@ -927,7 +995,7 @@
               <div className="flex justify-between">
                 <Button variant="outline" onClick={() => setStep(3)}>Back</Button>
                 <Button onClick={handleSave} disabled={saving || !form.name}>
-                  {saving ? 'Creating...' : 'Create Program (Draft)'}
+                  {saving ? 'Saving...' : isEdit ? 'Save Changes' : 'Create Program (Draft)'}
                 </Button>
               </div>
             </div>
