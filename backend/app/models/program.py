@@ -42,7 +42,14 @@ class Program(Base):
 RULE_TYPES = (
     "model_year", "body_style", "trim", "finance_type", "channel",
     "region", "dealer", "conquest_brand", "age_days", "mileage_cap",
-    "min_service_days", "msrp_range", "special_edition"
+    "min_service_days", "msrp_range", "special_edition",
+    # state-level targeting (e.g. CA-only). The wizard's State Targeting
+    # control writes this rule_type, and lookup.py:_program_has_state_
+    # restriction reads it. Was missing from the enum, so any program
+    # with a state selection failed at INSERT time on Postgres with
+    # InvalidTextRepresentation \u2014 surfaced to the UI as a generic
+    # "Request failed" toast.
+    "state",
 )
 OPERATORS = ("equals", "not_equals", "in", "not_in", "gte", "lte", "between")
 

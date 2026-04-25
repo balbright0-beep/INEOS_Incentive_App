@@ -85,8 +85,32 @@
           throw new Error('Unauthorized');
         }
         if (!res.ok) {
-          const err = await res.json().catch(() => ({ detail: 'Request failed' }));
-          throw new Error(err.detail || 'Request failed');
+          // Prefer JSON body. Pydantic 422 returns detail as an array
+          // of {loc, msg, type} — flatten those into a readable string
+          // so the toast doesn't say "[object Object]". Fall back to
+          // raw text for 5xx HTML pages, then to a status-aware
+          // generic. Always log the full response for diagnosis.
+          let body, contentType = res.headers.get('content-type') || '';
+          try {
+            body = contentType.includes('json') ? await res.json() : await res.text();
+          } catch (_) { body = null; }
+          console.error(`[API ${method} ${path}] ${res.status}`, body);
+          let msg;
+          if (body && typeof body === 'object' && body.detail !== undefined) {
+            if (Array.isArray(body.detail)) {
+              msg = body.detail.map(d => {
+                const loc = Array.isArray(d.loc) ? d.loc.slice(1).join('.') : '';
+                return loc ? `${loc}: ${d.msg}` : d.msg;
+              }).join('; ');
+            } else {
+              msg = String(body.detail);
+            }
+          } else if (typeof body === 'string' && body) {
+            // Strip HTML tags so an Nginx error page doesn't show as raw markup
+            msg = body.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+          }
+          if (!msg) msg = `Request failed (${res.status})`;
+          throw new Error(msg);
         }
         if (res.headers.get('content-type')?.includes('json')) return res.json();
         return res;

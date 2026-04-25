@@ -12,6 +12,28 @@ from app.seed import seed_database
 from app.routers import auth, programs, codes, lookup, transactions, payfiles, dashboard, settings as settings_router
 
 
+def _ensure_rule_type_state_value() -> None:
+    """
+    Idempotent ALTER TYPE for the rule_type Postgres enum. The model
+    declares 'state' as a valid rule_type but the enum was created
+    earlier without it, so any program saved with a state-targeting
+    rule failed at INSERT with InvalidTextRepresentation \u2014 surfaced
+    as a 500 on PUT /api/programs/{id} which the SPA shows as a
+    generic "Request failed" toast.
+
+    Postgres supports ADD VALUE IF NOT EXISTS for enums (>=9.6), so
+    this is a no-op on second boot. SQLite doesn't have a true enum
+    \u2014 SQLAlchemy's Enum is implemented as a CHECK constraint at
+    create_all time, and recreating the table to update it is
+    overkill for dev. The model-level Enum tuple is the only check
+    on SQLite, which already includes 'state' after the model edit.
+    """
+    if not settings.DATABASE_URL.startswith("postgres"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TYPE rule_type ADD VALUE IF NOT EXISTS 'state'"))
+
+
 def _ensure_program_published_column() -> None:
     """
     Idempotent ALTER for the production gate. The app uses
@@ -45,7 +67,8 @@ def _ensure_program_published_column() -> None:
 async def lifespan(app: FastAPI):
     # Create tables
     Base.metadata.create_all(bind=engine)
-    # Run idempotent column-level migrations that create_all can't do
+    # Run idempotent migrations that create_all can't do
+    _ensure_rule_type_state_value()
     _ensure_program_published_column()
     # Seed data
     db = SessionLocal()
