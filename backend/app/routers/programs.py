@@ -193,7 +193,7 @@ def update_program(
     #                    serializable" → 500 → SPA "Internal Server
     #                    Error" toast.
     update_data = req.model_dump(exclude_unset=True)
-    rules_data = update_data.pop("rules", None)
+    update_data.pop("rules", None)  # rules handled below from req.rules
     audit_details = req.model_dump(exclude_unset=True, mode="json")
     audit_details.pop("rules", None)
 
@@ -202,9 +202,14 @@ def update_program(
             val = Decimal(str(val))
         setattr(prog, key, val)
 
-    if rules_data is not None:
+    # Use req.rules (Pydantic objects with attributes) rather than the
+    # dict-converted update_data["rules"] — the latter trips on
+    # rule.rule_type because dicts don't expose keys as attributes.
+    # That AttributeError surfaced as a 500 on every Edit save and was
+    # the cause of the persistent "Internal Server Error" toast.
+    if "rules" in req.model_fields_set:
         db.query(ProgramRule).filter(ProgramRule.program_id == prog.id).delete()
-        for rule in rules_data:
+        for rule in (req.rules or []):
             db.add(ProgramRule(
                 program_id=prog.id,
                 rule_type=rule.rule_type,
