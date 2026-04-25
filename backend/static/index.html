@@ -119,6 +119,11 @@
     function Badge({ children, variant = 'default', className = '' }) {
       const styles = {
         active: 'bg-success/10 text-success',
+        // Phase variants for the staging→production gate. Live = on the
+        // public /lookup/ page; Staged = visible only to authenticated
+        // admins/RBMs/retailers awaiting publish.
+        live: 'bg-success/10 text-success',
+        staged: 'bg-yellow-100 text-yellow-800',
         draft: 'bg-mushroom text-iron-smoke',
         expired: 'bg-flare-red/10 text-flare-red',
         cancelled: 'bg-error/10 text-error',
@@ -436,12 +441,34 @@
       const load = () => API.get('/programs').then(setPrograms).finally(() => setLoading(false));
       React.useEffect(() => { load(); }, []);
 
-      const filtered = filter === 'all' ? programs : programs.filter(p => p.status === filter);
+      // Filter on the derived `phase` (draft / staged / live / expired)
+      // rather than raw `status`, so admins can isolate "what's queued
+      // up for publish" (staged) separately from "what's customer-
+      // facing right now" (live).
+      const filtered = filter === 'all' ? programs : programs.filter(p => (p.phase || p.status) === filter);
 
       async function handleActivate(id) {
         try {
           const res = await API.post(`/programs/${id}/activate`);
-          toast.show(`Program activated. ${res.codes_generated} codes generated.`);
+          toast.show(`Staged for review. ${res.codes_generated} codes generated. Click Publish to push live.`);
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      async function handlePublish(id, name) {
+        if (!confirm(`Publish "${name}" to the public lookup? Customers using the shareable link will see this immediately.`)) return;
+        try {
+          await API.post(`/programs/${id}/publish`);
+          toast.show('Published — now live on the public lookup');
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
+      async function handleUnpublish(id, name) {
+        if (!confirm(`Pull "${name}" back to staging? It stays in the matrix and authenticated lookup, but disappears from the public page.`)) return;
+        try {
+          await API.post(`/programs/${id}/unpublish`);
+          toast.show('Pulled back to staging — public page no longer shows it');
           load();
         } catch (e) { toast.show(e.message, 'error'); }
       }
@@ -474,11 +501,11 @@
             <h1 className="text-2xl font-bold text-onyx">Programs</h1>
             {user.role === 'admin' && <Button onClick={() => setShowCreate(true)}>+ New Program</Button>}
           </div>
-          <div className="flex gap-2 mb-4">
-            {['all', 'active', 'draft', 'expired'].map(s => (
+          <div className="flex gap-2 mb-4 flex-wrap">
+            {['all', 'draft', 'staged', 'live', 'expired'].map(s => (
               <button key={s} onClick={() => setFilter(s)}
                 className={`px-3 py-1.5 rounded-full text-sm capitalize ${filter === s ? 'bg-onyx text-white' : 'bg-dove text-iron-smoke hover:bg-mushroom'}`}>
-                {s} {s !== 'all' && `(${programs.filter(p => p.status === s).length})`}
+                {s} {s !== 'all' && `(${programs.filter(p => (p.phase || p.status) === s).length})`}
               </button>
             ))}
           </div>
@@ -488,7 +515,7 @@
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="font-semibold text-onyx text-sm">{p.name}</h3>
-                    <Badge variant={p.status} className="mt-1">{p.status}</Badge>
+                    <Badge variant={p.phase || p.status} className="mt-1">{p.phase || p.status}</Badge>
                   </div>
                   <Badge variant="default">{p.program_type.replace('_', ' ')}</Badge>
                 </div>
@@ -506,8 +533,10 @@
                   <p>{p.units_to_date || 0} units claimed</p>
                 </div>
                 {user.role === 'admin' && (
-                  <div className="flex gap-2 pt-3 border-t border-dove">
-                    {p.status === 'draft' && <Button size="sm" onClick={() => handleActivate(p.id)}>Activate</Button>}
+                  <div className="flex gap-2 pt-3 border-t border-dove flex-wrap">
+                    {p.phase === 'draft' && <Button size="sm" onClick={() => handleActivate(p.id)}>Stage</Button>}
+                    {p.phase === 'staged' && <Button size="sm" onClick={() => handlePublish(p.id, p.name)}>Publish</Button>}
+                    {p.phase === 'live' && <Button size="sm" variant="outline" onClick={() => handleUnpublish(p.id, p.name)}>Unpublish</Button>}
                     <Button size="sm" variant="outline" onClick={() => handleClone(p.id)}>Clone</Button>
                     <Button size="sm" variant="ghost" onClick={() => window.open(`/api/settings/bulletin/${p.id}`, '_blank')}>PDF</Button>
                     <Button size="sm" variant="ghost" onClick={() => handleDelete(p.id, p.name)} className="text-error/60 hover:text-error">Delete</Button>

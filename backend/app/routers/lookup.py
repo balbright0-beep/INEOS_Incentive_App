@@ -50,7 +50,11 @@ def public_incentive_lookup(req: LookupRequest, db: Session = Depends(get_db)):
         if resolved:
             req.state = resolved
 
-    result = lookup_incentive(db, req)
+    # public_only=True enforces the production gate: codes whose layers
+    # include any staged (unpublished) program are filtered out so the
+    # shareable page only shows numbers an admin has explicitly signed
+    # off on via the Publish action.
+    result = lookup_incentive(db, req, public_only=True)
     if not result:
         raise HTTPException(
             status_code=404,

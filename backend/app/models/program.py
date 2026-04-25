@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Enum, Date, Numeric, Text, DateTime, func, ForeignKey, JSON
+from sqlalchemy import Column, String, Enum, Date, Numeric, Text, DateTime, Boolean, func, ForeignKey, JSON
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -17,6 +17,12 @@ class Program(Base):
     name = Column(String(300), nullable=False)
     program_type = Column(Enum(*PROGRAM_TYPES, name="program_type"), nullable=False)
     status = Column(Enum(*PROGRAM_STATUSES, name="program_status"), nullable=False, default="draft")
+    # Production gate. status='active' alone is "staged" — visible to
+    # logged-in admins / RBMs / retailers via the authenticated lookup
+    # so they can sanity-check the matrix before exposing it. Setting
+    # published=True promotes to production: visible on the public
+    # /lookup/ page and any other unauthenticated surface.
+    published = Column(Boolean, nullable=False, default=False, server_default="false")
     effective_date = Column(Date, nullable=False)
     expiration_date = Column(Date, nullable=False)
     budget_amount = Column(Numeric(14, 2), nullable=True)

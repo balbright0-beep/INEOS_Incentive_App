@@ -21,8 +21,17 @@ def _program_has_state_restriction(db: Session, program_id: str) -> list[str] | 
     return [str(val).upper()]
 
 
-def lookup_incentive(db: Session, req: LookupRequest) -> LookupResponse | None:
-    """Find the single matching campaign code for a deal configuration."""
+def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False) -> LookupResponse | None:
+    """
+    Find the single matching campaign code for a deal configuration.
+
+    public_only — production gate. When True (only the unauthenticated
+    /api/lookup/public path sets it), a code is returned only when EVERY
+    contributing program is published=True. A staged program in any layer
+    blocks the whole code from the public response so customers never see
+    a number that admins haven't signed off on. Authenticated callers get
+    the full staging+live view.
+    """
 
     # Map finance_type to deal_type
     deal_type_map = {"cash": "cash", "apr": "apr", "lease": "lease"}
@@ -59,6 +68,16 @@ def lookup_incentive(db: Session, req: LookupRequest) -> LookupResponse | None:
         .filter(CampaignCodeLayer.campaign_code_id == code.id)
         .all()
     )
+
+    # Production gate: if any contributing program is still staged
+    # (published=False), the whole code stays out of the public response.
+    # Returning None lets the router translate this to the same 404 the
+    # caller would have seen pre-gate, so the public UI just shows
+    # "no active program" instead of leaking that something exists in
+    # staging.
+    if public_only:
+        if not all(getattr(prog, "published", False) for _, prog in layers_data):
+            return None
 
     layers = []
     excluded_by_state = []

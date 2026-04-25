@@ -40,11 +40,20 @@ def _enrich_program(db: Session, prog: Program) -> dict:
             spend = float(result[0])
             units = result[1]
 
+    # Phase derives from status + published. The frontend uses this
+    # to render the right badge (Draft / Staged / Live / Expired) and
+    # the right action button (Activate vs Publish vs Unpublish).
+    if prog.status == "active":
+        phase = "live" if getattr(prog, "published", False) else "staged"
+    else:
+        phase = prog.status  # draft / expired / cancelled
     data = {
         "id": prog.id,
         "name": prog.name,
         "program_type": prog.program_type,
         "status": prog.status,
+        "published": bool(getattr(prog, "published", False)),
+        "phase": phase,
         "effective_date": prog.effective_date,
         "expiration_date": prog.expiration_date,
         "budget_amount": float(prog.budget_amount) if prog.budget_amount else None,
@@ -172,19 +181,89 @@ def activate_program(
     db: Session = Depends(get_db),
     user: User = Depends(require_admin),
 ):
+    """
+    Promote a draft to STAGED. The program enters the active code matrix
+    and is visible to authenticated admins / RBMs / retailers via the
+    internal lookup, but is gated off the public /lookup/ page until an
+    admin explicitly calls /publish.
+    """
     prog = db.query(Program).filter(Program.id == program_id).first()
     if not prog:
         raise HTTPException(status_code=404, detail="Program not found")
     prog.status = "active"
+    # Activation never auto-publishes — the whole point of the gate is
+    # that an admin gets a sanity-check window. Setting published=False
+    # explicitly here also handles re-activating a previously-cancelled
+    # program: it goes back to staged, not straight to production.
+    prog.published = False
     db.add(AuditLog(
         entity_type="program", entity_id=prog.id,
         action="activated", user_id=user.id,
+        details={"phase": "staged"},
     ))
     db.commit()
 
     # Rebuild code matrix
     matrix = rebuild_matrix(db)
-    return {"message": "Program activated", "codes_generated": len(matrix)}
+    return {"message": "Program staged", "phase": "staged", "codes_generated": len(matrix)}
+
+
+@router.post("/{program_id}/publish")
+def publish_program(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """
+    Promote a STAGED program to LIVE — it now shows on the public
+    /lookup/ page. Refuses to publish a draft (must stage first) so
+    the staging window can't be skipped accidentally.
+    """
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if prog.status != "active":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot publish a {prog.status} program. Activate it to staging first.",
+        )
+    if prog.published:
+        return {"message": "Program already live", "phase": "live"}
+    prog.published = True
+    db.add(AuditLog(
+        entity_type="program", entity_id=prog.id,
+        action="published", user_id=user.id,
+        details={"phase": "live"},
+    ))
+    db.commit()
+    return {"message": "Program published", "phase": "live"}
+
+
+@router.post("/{program_id}/unpublish")
+def unpublish_program(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """
+    Pull a LIVE program back to STAGED — useful if a number was wrong
+    and we need to remove it from the public page while we fix it.
+    Doesn't delete or deactivate; the matrix and authenticated lookup
+    still show it.
+    """
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if not prog.published:
+        return {"message": "Program already staged", "phase": "staged"}
+    prog.published = False
+    db.add(AuditLog(
+        entity_type="program", entity_id=prog.id,
+        action="unpublished", user_id=user.id,
+        details={"phase": "staged"},
+    ))
+    db.commit()
+    return {"message": "Program pulled back to staging", "phase": "staged"}
 
 
 @router.post("/{program_id}/clone")

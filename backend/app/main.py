@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
+from sqlalchemy import inspect, text
 import os
 
 from app.config import settings
@@ -11,10 +12,41 @@ from app.seed import seed_database
 from app.routers import auth, programs, codes, lookup, transactions, payfiles, dashboard, settings as settings_router
 
 
+def _ensure_program_published_column() -> None:
+    """
+    Idempotent ALTER for the production gate. The app uses
+    Base.metadata.create_all (no Alembic), so a new column on an
+    existing table never lands automatically. We inspect the live
+    schema, add the column when it's missing, then backfill so
+    every program currently in 'active' status stays publicly
+    visible on the first deploy after the gate ships — without
+    that backfill, every existing program would silently drop
+    off the public /lookup/ page.
+    """
+    insp = inspect(engine)
+    if "programs" not in insp.get_table_names():
+        return  # create_all will handle a fresh DB
+    cols = {c["name"] for c in insp.get_columns("programs")}
+    if "published" in cols:
+        return
+    is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+    add_sql = (
+        "ALTER TABLE programs ADD COLUMN published BOOLEAN NOT NULL DEFAULT 0"
+        if is_sqlite
+        else "ALTER TABLE programs ADD COLUMN published BOOLEAN NOT NULL DEFAULT false"
+    )
+    backfill_sql = "UPDATE programs SET published = TRUE WHERE status = 'active'"
+    with engine.begin() as conn:
+        conn.execute(text(add_sql))
+        conn.execute(text(backfill_sql))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Create tables
     Base.metadata.create_all(bind=engine)
+    # Run idempotent column-level migrations that create_all can't do
+    _ensure_program_published_column()
     # Seed data
     db = SessionLocal()
     try:
