@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>INEOS Incentive Finder</title>
+  <meta name="description" content="Look up current INEOS retail incentives by VIN or vehicle configuration.">
+  <link rel="stylesheet" href="https://ineos-americas-platform.onrender.com/ids.css">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            'flare-red': '#FF4639',
+            'onyx': '#1D1D1D',
+            'charcoal': '#171717',
+            'mushroom': '#D9D7D0',
+            'mushroom-light': '#FAFAF9',
+            'dove': '#E9E8E5',
+            'iron-smoke': '#606060',
+            'silver-dust': '#9F9F9F',
+            'success': '#2C931E',
+            'error': '#CC0200',
+          },
+          fontFamily: {
+            sans: ["'PPNeueMontreal'", "'Plus Jakarta Sans'", 'Inter', 'system-ui', 'sans-serif'],
+            mono: ["'JetBrains Mono'", 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+    * { font-family: 'PPNeueMontreal', 'Inter', system-ui, -apple-system, sans-serif; }
+    body { background: #FAFAF9; margin: 0; }
+    h1, h2, .hub-display {
+      font-family: 'Formula4x4', 'Arial Black', sans-serif !important;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .eyebrow {
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-size: 10px;
+      color: #9F9F9F;
+    }
+    .field-label {
+      display: block;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      color: #606060;
+      margin-bottom: 4px;
+    }
+    .field-input, .field-select {
+      width: 100%;
+      padding: 8px 12px;
+      border: 1px solid #E9E8E5;
+      border-radius: 4px;
+      font-size: 14px;
+      background: #fff;
+      color: #1D1D1D;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .field-input:focus, .field-select:focus {
+      outline: none;
+      border-color: #FF4639;
+      box-shadow: 0 0 0 3px rgba(255,70,57,0.12);
+    }
+    .field-input.font-mono { font-family: 'JetBrains Mono', monospace; letter-spacing: 0.06em; }
+    .btn-primary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 18px;
+      background: #FF4639;
+      color: #fff;
+      border: none;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: #E63D31; }
+    .btn-primary:disabled { background: #D9D7D0; color: #9F9F9F; cursor: not-allowed; }
+    .card {
+      background: #fff;
+      border: 1px solid #E9E8E5;
+      border-radius: 4px;
+    }
+    .or-divider {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin: 12px 0;
+    }
+    .or-divider .line { flex: 1; height: 1px; background: #D9D7D0; }
+    .or-divider .label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #9F9F9F;
+    }
+    .vin-found {
+      background: rgba(44,147,30,0.05);
+      border: 1px solid rgba(44,147,30,0.2);
+      border-radius: 4px;
+      padding: 10px 12px;
+      font-size: 12px;
+    }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 700;
+      border-radius: 3px;
+    }
+    .badge-success { background: #2C931E; color: #fff; }
+    .badge-info    { background: #2A5DB0; color: #fff; }
+    .layer-row {
+      display: flex; justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid rgba(217,215,208,0.6);
+      font-size: 14px;
+    }
+    .layer-row:last-child { border-bottom: none; }
+    .total-row {
+      display: flex; justify-content: space-between;
+      padding: 14px 0 6px;
+      border-top: 2px solid #1D1D1D;
+      font-weight: 700;
+    }
+    .na-row {
+      display: flex; justify-content: space-between;
+      padding: 8px 0;
+      font-size: 12.5px;
+      color: #606060;
+      border-bottom: 1px dashed rgba(217,215,208,0.6);
+    }
+    .na-row:last-child { border-bottom: none; }
+    .toast {
+      position: fixed; right: 20px; top: 20px;
+      background: #1D1D1D; color: #fff;
+      padding: 10px 16px;
+      border-radius: 4px;
+      font-size: 13px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.18);
+      animation: slideIn 0.25s ease-out;
+      z-index: 1000;
+    }
+    .toast.warn { background: #B97A00; }
+    .toast.error { background: #CC0200; }
+    @keyframes slideIn { from { transform: translateX(120%); } to { transform: translateX(0); } }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }
+    .fade-in { animation: fadeIn 0.2s ease-out; }
+    .checkbox-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 0;
+      cursor: pointer;
+      user-select: none;
+    }
+    .checkbox-row input { width: 16px; height: 16px; accent-color: #FF4639; cursor: pointer; }
+    .checkbox-row span { font-size: 14px; color: #1D1D1D; }
+    .empty-state {
+      padding: 60px 30px;
+      text-align: center;
+      color: #9F9F9F;
+    }
+    .empty-state svg { margin: 0 auto 16px; opacity: 0.4; }
+    @media (max-width: 1024px) {
+      .layout { flex-direction: column; }
+      .layout > div { width: 100% !important; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Top banner -->
+  <header style="background:#1D1D1D;color:#fff;padding:14px 24px;border-bottom:3px solid #FF4639">
+    <div style="max-width:1200px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:14px">
+        <div style="font-family:'Formula4x4','Arial Black',sans-serif;font-size:20px;letter-spacing:0.04em">INEOS</div>
+        <div style="height:18px;width:1px;background:#606060"></div>
+        <div class="eyebrow" style="color:#9F9F9F">Retail Incentive Finder</div>
+      </div>
+      <div class="eyebrow" id="today" style="color:#606060"></div>
+    </div>
+  </header>
+
+  <main style="max-width:1200px;margin:0 auto;padding:32px 24px 48px">
+    <div style="margin-bottom:24px">
+      <h1 style="font-size:28px;color:#1D1D1D;margin:0">Find Your Incentive</h1>
+      <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:680px">
+        Enter a VIN to auto-populate vehicle details, or select model and trim manually. Add your ZIP code so state-specific programs filter correctly.
+        Results show the active campaign code and a layer-by-layer breakdown of every contributing program.
+      </p>
+    </div>
+
+    <div class="layout" style="display:flex;gap:24px;align-items:flex-start">
+      <!-- LEFT: form -->
+      <div style="width:400px;flex-shrink:0">
+        <form id="lookup-form" class="card" style="padding:22px">
+          <h3 class="eyebrow" style="margin:0 0 12px;color:#1D1D1D">Vehicle Information</h3>
+          <label class="field-label" for="vin">VIN Lookup</label>
+          <input id="vin" name="vin" class="field-input font-mono" maxlength="17" autocomplete="off" placeholder="Enter VIN to auto-populate vehicle details">
+          <p id="vin-status" style="font-size:11px;color:#9F9F9F;margin-top:4px;min-height:14px"></p>
+
+          <div id="vin-found" class="vin-found fade-in" style="display:none;margin-top:6px"></div>
+
+          <div class="or-divider">
+            <div class="line"></div><div class="label">or select manually</div><div class="line"></div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+            <div>
+              <label class="field-label" for="model_year">Model Year</label>
+              <select id="model_year" class="field-select">
+                <option value="MY25">MY25</option>
+                <option value="MY26" selected>MY26</option>
+                <option value="MY27">MY27</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label" for="body_style">Body Style</label>
+              <select id="body_style" class="field-select">
+                <option value="station_wagon" selected>Station Wagon</option>
+                <option value="quartermaster">Quartermaster</option>
+              </select>
+            </div>
+          </div>
+          <div style="margin-top:10px">
+            <label class="field-label" for="trim">Trim</label>
+            <select id="trim" class="field-select">
+              <option value="">Any</option>
+              <option value="Base">Base</option>
+              <option value="Fieldmaster">Fieldmaster</option>
+              <option value="Belstaff">Belstaff</option>
+              <option value="Trialmaster">Trialmaster</option>
+              <option value="Highlands">Highlands</option>
+            </select>
+          </div>
+
+          <h3 class="eyebrow" style="margin:22px 0 12px;color:#1D1D1D">Deal Information</h3>
+          <label class="field-label" for="finance_type">Finance Type</label>
+          <select id="finance_type" class="field-select">
+            <option value="cash">Cash</option>
+            <option value="apr">APR (Finance)</option>
+            <option value="lease">Lease</option>
+          </select>
+
+          <h3 class="eyebrow" style="margin:22px 0 12px;color:#1D1D1D">Customer Location</h3>
+          <div style="display:grid;grid-template-columns:120px 1fr;gap:10px">
+            <div>
+              <label class="field-label" for="zip_code">ZIP Code</label>
+              <input id="zip_code" class="field-input" inputmode="numeric" maxlength="10" placeholder="e.g. 92101">
+            </div>
+            <div>
+              <label class="field-label" for="state">State</label>
+              <select id="state" class="field-select"></select>
+            </div>
+          </div>
+          <p id="zip-status" style="font-size:11px;color:#2C931E;margin-top:4px;min-height:14px"></p>
+
+          <h3 class="eyebrow" style="margin:22px 0 8px;color:#1D1D1D">Customer Qualifications</h3>
+          <label class="checkbox-row">
+            <input type="checkbox" id="conquest"> <span>Conquest (Competitive Trade-In)</span>
+          </label>
+          <div id="conquest-brand-wrap" style="display:none;margin:0 0 6px 26px">
+            <label class="field-label" for="conquest_brand">Competitor Brand</label>
+            <input id="conquest_brand" class="field-input" placeholder="e.g. Land Rover">
+          </div>
+          <label class="checkbox-row">
+            <input type="checkbox" id="loyalty"> <span>Loyalty (Existing INEOS Household)</span>
+          </label>
+          <div id="loyalty-vin-wrap" style="display:none;margin:0 0 6px 26px">
+            <label class="field-label" for="loyalty_vin">Existing Household VIN</label>
+            <input id="loyalty_vin" class="field-input font-mono" maxlength="17">
+          </div>
+
+          <button type="submit" class="btn-primary" id="submit-btn" style="width:100%;margin-top:18px">
+            <span id="submit-label">Find Incentive Code</span>
+          </button>
+        </form>
+
+        <p style="font-size:11px;color:#9F9F9F;margin:14px 4px 0;line-height:1.5">
+          Results reflect active national programs and may exclude retailer- or region-specific add-ons.
+          Confirm final pricing with your INEOS retailer.
+        </p>
+      </div>
+
+      <!-- RIGHT: results -->
+      <div style="flex:1;min-width:0">
+        <div id="results"></div>
+        <div id="empty-state" class="card empty-state">
+          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#9F9F9F" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <h2 style="font-size:18px;color:#606060;margin:0 0 6px">Enter a VIN or vehicle details</h2>
+          <p style="font-size:13px;color:#9F9F9F;margin:0;max-width:340px;margin:0 auto">
+            Your campaign code, total support amount, and layer-by-layer breakdown will appear here.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <footer style="margin-top:48px;padding-top:24px;border-top:1px solid #E9E8E5;display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;align-items:center">
+      <div class="eyebrow">INEOS Automotive · United States</div>
+      <button id="share-btn" type="button" style="background:none;border:1px solid #E9E8E5;color:#1D1D1D;padding:8px 14px;border-radius:4px;font-size:12px;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;cursor:pointer">↗ Copy Shareable Link</button>
+    </footer>
+  </main>
+
+  <script>
+    // ───────────── State + helpers ─────────────
+    const $ = (id) => document.getElementById(id);
+    const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('en-US', {maximumFractionDigits:0});
+    const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+    let vinActive = false;       // true once a 17-char VIN populated the form
+    let vinDebounce = null;
+    let zipDebounce = null;
+
+    function toast(msg, kind) {
+      const el = document.createElement('div');
+      el.className = 'toast' + (kind ? ' ' + kind : '');
+      el.textContent = msg;
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 3500);
+    }
+
+    // ───────────── Init ─────────────
+    $('today').textContent = new Date().toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'}).toUpperCase();
+
+    // Populate state dropdown (default: blank → "Auto from ZIP")
+    fetch('/api/lookup/states').then(r => r.ok ? r.json() : []).then(states => {
+      const sel = $('state');
+      sel.innerHTML = '<option value="">Auto from ZIP</option>' +
+        (states || []).map(s => `<option value="${escapeHtml(s.value)}">${escapeHtml(s.label)}</option>`).join('');
+    }).catch(() => {
+      // Fall-back hard-coded list — keeps the form usable if /states is down.
+      const fallback = ['AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC'];
+      $('state').innerHTML = '<option value="">Auto from ZIP</option>' + fallback.map(s => `<option value="${s}">${s}</option>`).join('');
+    });
+
+    // ───────────── VIN auto-lookup ─────────────
+    $('vin').addEventListener('input', (e) => {
+      e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 17);
+      const vin = e.target.value;
+      clearTimeout(vinDebounce);
+      $('vin-status').textContent = '';
+      if (vin.length < 17) {
+        // Reset VIN-driven state once the user shortens the VIN.
+        if (vinActive) {
+          vinActive = false;
+          $('vin-found').style.display = 'none';
+        }
+        return;
+      }
+      $('vin-status').textContent = 'Searching inventory…';
+      vinDebounce = setTimeout(() => {
+        fetch(`/api/lookup/vin/${encodeURIComponent(vin)}`)
+          .then(r => r.ok ? r.json() : Promise.reject(r.status))
+          .then(data => {
+            vinActive = true;
+            $('vin-status').textContent = '';
+            if (data.model_year) $('model_year').value = data.model_year;
+            if (data.body_style) $('body_style').value = data.body_style;
+            if (data.trim) $('trim').value = data.trim;
+            const tail = `
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+                <span style="font-weight:600;color:#2C931E">Vehicle Found</span>
+                <span class="badge ${data.source === 'inventory' ? 'badge-success' : 'badge-info'}">${data.source === 'inventory' ? 'Inventory' : 'VIN Pattern'}</span>
+              </div>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:2px 12px;color:#606060">
+                <span>${escapeHtml(data.model_year || '')} ${escapeHtml((data.body_style || '').replace('_',' '))}</span>
+                <span>${escapeHtml(data.trim || '')}</span>
+                ${data.color_exterior ? `<span>Ext: ${escapeHtml(data.color_exterior)}</span>` : ''}
+                ${data.msrp ? `<span>MSRP: ${fmtMoney(data.msrp)}</span>` : ''}
+                ${data.dealer_name ? `<span>Dealer: ${escapeHtml(data.dealer_name)}</span>` : ''}
+                ${data.status ? `<span>Status: ${escapeHtml(data.status)}</span>` : ''}
+              </div>`;
+            $('vin-found').innerHTML = tail;
+            $('vin-found').style.display = 'block';
+            toast(`Vehicle found: ${data.model_year || ''} ${(data.body_style || '').replace('_',' ')} ${data.trim || ''}`.replace(/\s+/g,' ').trim());
+          })
+          .catch(() => {
+            vinActive = false;
+            $('vin-found').style.display = 'none';
+            $('vin-status').textContent = 'VIN not in inventory — select details manually.';
+            toast('VIN not found in inventory. Select details manually.', 'warn');
+          });
+      }, 250);
+    });
+
+    // ───────────── ZIP auto-resolve ─────────────
+    $('zip_code').addEventListener('input', (e) => {
+      const z = e.target.value.replace(/\D/g, '').slice(0, 5);
+      e.target.value = z;
+      clearTimeout(zipDebounce);
+      $('zip-status').textContent = '';
+      if (z.length < 5) return;
+      zipDebounce = setTimeout(() => {
+        fetch(`/api/lookup/zip/${z}`)
+          .then(r => r.ok ? r.json() : Promise.reject(r.status))
+          .then(data => {
+            if (data.state) {
+              $('state').value = data.state;
+              $('zip-status').textContent = `Resolved: ${data.state}${data.state_name ? ' (' + data.state_name + ')' : ''}`;
+            }
+          })
+          .catch(() => { $('zip-status').textContent = ''; });
+      }, 200);
+    });
+
+    // ───────────── Conquest / Loyalty visibility ─────────────
+    $('conquest').addEventListener('change', e => $('conquest-brand-wrap').style.display = e.target.checked ? 'block' : 'none');
+    $('loyalty').addEventListener('change', e => $('loyalty-vin-wrap').style.display = e.target.checked ? 'block' : 'none');
+
+    // ───────────── Submit ─────────────
+    $('lookup-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('submit-btn');
+      const lbl = $('submit-label');
+      btn.disabled = true;
+      lbl.textContent = 'Looking up…';
+      $('results').innerHTML = '';
+      $('empty-state').style.display = 'none';
+
+      const body = {
+        vin: $('vin').value || null,
+        model_year: $('model_year').value,
+        body_style: $('body_style').value,
+        trim: $('trim').value || null,
+        finance_type: $('finance_type').value,
+        zip_code: $('zip_code').value || null,
+        state: $('state').value || null,
+        conquest: $('conquest').checked,
+        conquest_brand: $('conquest').checked ? ($('conquest_brand').value || null) : null,
+        loyalty: $('loyalty').checked,
+        loyalty_vin: $('loyalty').checked ? ($('loyalty_vin').value || null) : null,
+      };
+
+      try {
+        const r = await fetch('/api/lookup/public', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (r.status === 404) {
+          const j = await r.json().catch(() => ({}));
+          $('empty-state').style.display = 'block';
+          $('empty-state').innerHTML = `
+            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#CC0200" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+            <h2 style="font-size:18px;color:#CC0200;margin:0 0 6px">No Active Program</h2>
+            <p style="font-size:13px;color:#606060;margin:0;max-width:380px;margin-left:auto;margin-right:auto">${escapeHtml(j.detail || 'No active incentive program for this configuration.')}</p>`;
+          return;
+        }
+        if (!r.ok) throw new Error('Lookup failed (' + r.status + ')');
+        const result = await r.json();
+        renderResult(result);
+      } catch (err) {
+        toast(err.message || 'Lookup failed', 'error');
+        $('empty-state').style.display = 'block';
+      } finally {
+        btn.disabled = false;
+        lbl.textContent = 'Find Incentive Code';
+      }
+    });
+
+    function renderResult(r) {
+      const layers = (r.layers || []).map(l => `
+        <div class="layer-row">
+          <span>${escapeHtml(l.program_name)}</span>
+          <span style="font-weight:600">${fmtMoney(l.amount)}</span>
+        </div>`).join('');
+      const na = (r.not_applicable || []).map(x => `
+        <div class="na-row">
+          <span>${escapeHtml(x.label || x.program_type)}</span>
+          <span style="font-style:italic;color:#9F9F9F">${escapeHtml(x.reason || '')}</span>
+        </div>`).join('');
+
+      const html = `
+        <div class="card fade-in" style="padding:32px;text-align:center;border:2px solid rgba(255,70,57,0.2);margin-bottom:16px">
+          <p class="eyebrow" style="margin:0 0 8px">Campaign Code</p>
+          <div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
+          </div>
+          <p style="font-size:32px;font-weight:700;color:#2C931E;margin:0">${fmtMoney(r.total_support_amount)}</p>
+          <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">Total Support Amount${r.label ? ' · ' + escapeHtml(r.label) : ''}</p>
+          <div style="margin-top:12px;font-size:11px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">
+            ${escapeHtml(r.model_year)} · ${escapeHtml((r.body_style || '').replace('_',' ').toUpperCase())} · ${escapeHtml((r.deal_type || '').toUpperCase())}${r.loyalty ? ' · LOYALTY' : ''}${r.conquest ? ' · CONQUEST' : ''}
+          </div>
+        </div>
+
+        <div class="card fade-in" style="padding:24px;margin-bottom:16px">
+          <h3 class="eyebrow" style="margin:0 0 12px;color:#1D1D1D">Incentive Breakdown</h3>
+          ${layers || '<p style="font-size:13px;color:#9F9F9F">No contributing programs.</p>'}
+          <div class="total-row">
+            <span>TOTAL SUPPORT</span>
+            <span style="color:#2C931E">${fmtMoney(r.total_support_amount)}</span>
+          </div>
+        </div>
+
+        ${na ? `
+        <div class="card fade-in" style="padding:24px">
+          <h3 class="eyebrow" style="margin:0 0 12px;color:#606060">Not Applicable to This Deal</h3>
+          ${na}
+        </div>` : ''}`;
+
+      $('results').innerHTML = html;
+    }
+
+    // ───────────── Share button ─────────────
+    $('share-btn').addEventListener('click', async () => {
+      const url = location.origin + location.pathname;
+      try {
+        await navigator.clipboard.writeText(url);
+        toast('Shareable link copied to clipboard');
+      } catch {
+        prompt('Copy this link:', url);
+      }
+    });
+  </script>
+</body>
+</html>

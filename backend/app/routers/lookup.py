@@ -32,6 +32,33 @@ def incentive_lookup(
     return result
 
 
+@router.post("/public", response_model=LookupResponse)
+def public_incentive_lookup(req: LookupRequest, db: Session = Depends(get_db)):
+    """
+    Phase 1 of the Incentive Dashboard rollout: a public, dealer-agnostic
+    lookup powered by the same matching service as the authenticated path.
+    No login required \u2014 the page behind it is shareable. Phase 2 will add a
+    dealer-scoped variant that gates by retailer credentials.
+    """
+    # Drop any dealer-specific signal the caller may have supplied. The
+    # public path is dealer-agnostic by definition; ignoring instead of
+    # rejecting keeps the request shape identical to the authenticated
+    # version so the same client form can target either endpoint.
+    req.dealer_id = None
+    if req.zip_code and not req.state:
+        resolved = zip_to_state(req.zip_code)
+        if resolved:
+            req.state = resolved
+
+    result = lookup_incentive(db, req)
+    if not result:
+        raise HTTPException(
+            status_code=404,
+            detail="No active incentive program for this configuration. Contact your INEOS retailer."
+        )
+    return result
+
+
 @router.get("/vin/{vin}")
 def vin_lookup(vin: str, db: Session = Depends(get_db)):
     """Look up a VIN from the internal vehicle inventory (Master File).
