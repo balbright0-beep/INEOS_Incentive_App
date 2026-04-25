@@ -1832,8 +1832,19 @@
 
       if (loading) return <Spinner />;
 
+      // Datalist values combine the seed list with whatever trims are
+      // already on saved products, so previously-entered custom trims
+      // autocomplete on the next add/edit too.
+      const trimSuggestions = Array.from(new Set([
+        ...trimOpts.map(o => o.value),
+        ...products.map(p => p.trim).filter(Boolean),
+      ])).sort();
+
       return (
         <div>
+          <datalist id="product-trim-list">
+            {trimSuggestions.map(t => <option key={t} value={t} />)}
+          </datalist>
           <div className="flex justify-end mb-4">
             <Button size="sm" onClick={() => setShowCreate(true)}>+ Add Product</Button>
           </div>
@@ -1865,8 +1876,15 @@
                               className="w-full px-2 py-1 border border-mushroom rounded text-sm">{bodyOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
                           </td>
                           <td className="px-4 py-2">
-                            <select value={editForm.trim} onChange={e => setEditForm(f => ({...f, trim: e.target.value}))}
-                              className="w-full px-2 py-1 border border-mushroom rounded text-sm">{trimOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}</select>
+                            {/* Free-form text so the admin can enter
+                                a trim that hasn't been pre-listed yet
+                                (e.g. a new edition partway through the
+                                model year). The datalist gives
+                                autocomplete from the trims we already
+                                know about. */}
+                            <input value={editForm.trim} onChange={e => setEditForm(f => ({...f, trim: e.target.value}))}
+                              list="product-trim-list"
+                              className="w-full px-2 py-1 border border-mushroom rounded text-sm" placeholder="e.g. Base" />
                           </td>
                           <td className="px-4 py-2">
                             <input value={editForm.special_edition} onChange={e => setEditForm(f => ({...f, special_edition: e.target.value}))}
@@ -1917,7 +1935,7 @@
             <form onSubmit={handleCreate} className="space-y-3">
               <Select label="Model Year" value={createForm.model_year} onChange={e => setCreateForm(f => ({...f, model_year: e.target.value}))} options={myOpts} />
               <Select label="Body Style" value={createForm.body_style} onChange={e => setCreateForm(f => ({...f, body_style: e.target.value}))} options={bodyOpts} />
-              <Select label="Trim" value={createForm.trim} onChange={e => setCreateForm(f => ({...f, trim: e.target.value}))} options={trimOpts} />
+              <Input label="Trim" value={createForm.trim} onChange={e => setCreateForm(f => ({...f, trim: e.target.value}))} list="product-trim-list" placeholder="e.g. Base, Fieldmaster, or a new edition name" />
               <Input label="Special Edition (optional)" value={createForm.special_edition} onChange={e => setCreateForm(f => ({...f, special_edition: e.target.value}))} placeholder="e.g., arcane_works_detour" />
               <Input label="MSRP ($)" type="number" value={createForm.msrp} onChange={e => setCreateForm(f => ({...f, msrp: e.target.value}))} placeholder="e.g., 75000" />
               <div className="flex justify-end gap-2 pt-2">
