@@ -455,23 +455,31 @@
         } catch (e) { toast.show(e.message, 'error'); }
       }
 
-      async function handlePublish(id, name) {
-        if (!confirm(`Publish "${name}" to the public lookup? Customers using the shareable link will see this immediately.`)) return;
+      async function handlePublishAll() {
+        const stagedCount = programs.filter(p => p.phase === 'staged').length;
+        if (stagedCount === 0) { toast.show('Nothing to publish — no staged programs.', 'warning'); return; }
+        if (!confirm(`Publish all ${stagedCount} staged program${stagedCount === 1 ? '' : 's'} to the public lookup? Customers using the shareable link will see this build immediately.`)) return;
         try {
-          await API.post(`/programs/${id}/publish`);
-          toast.show('Published — now live on the public lookup');
+          const res = await API.post('/programs/publish-all');
+          toast.show(`Build published — ${res.published} program${res.published === 1 ? '' : 's'} now live`);
           load();
         } catch (e) { toast.show(e.message, 'error'); }
       }
 
-      async function handleUnpublish(id, name) {
-        if (!confirm(`Pull "${name}" back to staging? It stays in the matrix and authenticated lookup, but disappears from the public page.`)) return;
+      async function handleUnpublishAll() {
+        const liveCount = programs.filter(p => p.phase === 'live').length;
+        if (liveCount === 0) { toast.show('Nothing to unpublish — no live programs.', 'warning'); return; }
+        if (!confirm(`Pull all ${liveCount} live program${liveCount === 1 ? '' : 's'} back to staging? The public lookup will go dark; the matrix and authenticated lookup are unaffected.`)) return;
         try {
-          await API.post(`/programs/${id}/unpublish`);
-          toast.show('Pulled back to staging — public page no longer shows it');
+          const res = await API.post('/programs/unpublish-all');
+          toast.show(`${res.unpublished} program${res.unpublished === 1 ? '' : 's'} pulled back to staging`);
           load();
         } catch (e) { toast.show(e.message, 'error'); }
       }
+
+      // Force the embedded preview iframe to re-fetch after every load()
+      // so the admin sees the build update as soon as a program is staged.
+      const previewSrc = `/lookup/?preview=1&t=${Date.now()}`;
 
       async function handleClone(id) {
         try {
@@ -495,12 +503,46 @@
 
       if (loading) return <Spinner />;
 
+      const stagedCount = programs.filter(p => p.phase === 'staged').length;
+      const liveCount = programs.filter(p => p.phase === 'live').length;
+
       return (
         <div className="fade-in">
           <div className="flex items-center justify-between mb-6">
             <h1 className="text-2xl font-bold text-onyx">Programs</h1>
             {user.role === 'admin' && <Button onClick={() => setShowCreate(true)}>+ New Program</Button>}
           </div>
+
+          {user.role === 'admin' && (
+            <Card className="mb-6 overflow-hidden">
+              <div className="p-5 flex items-center justify-between gap-4 flex-wrap border-b border-dove">
+                <div className="flex items-center gap-6">
+                  <div>
+                    <div className="text-[10px] font-mono uppercase tracking-widest text-silver-dust">Build Status</div>
+                    <div className="mt-1 text-base text-onyx">
+                      <span className="font-bold text-yellow-700">{stagedCount}</span> staged
+                      <span className="mx-2 text-mushroom">·</span>
+                      <span className="font-bold text-success">{liveCount}</span> live on shareable link
+                    </div>
+                  </div>
+                </div>
+                <div className="flex gap-2 flex-wrap">
+                  <Button size="sm" variant="outline" onClick={() => window.open(previewSrc, '_blank')}>↗ Open Preview Full Screen</Button>
+                  {liveCount > 0 && <Button size="sm" variant="ghost" onClick={handleUnpublishAll} className="text-iron-smoke">Unpublish All</Button>}
+                  <Button size="sm" onClick={handlePublishAll} disabled={stagedCount === 0}>
+                    {stagedCount === 0 ? 'No staged changes' : `Publish All Staged (${stagedCount}) →`}
+                  </Button>
+                </div>
+              </div>
+              <div className="bg-mushroom-light px-5 py-2 flex items-center justify-between border-b border-dove">
+                <span className="text-[10px] font-mono uppercase tracking-widest text-iron-smoke">Live Build Preview · what the public site will show after publish</span>
+                <span className="text-[10px] font-mono text-silver-dust">/lookup/?preview=1</span>
+              </div>
+              <iframe key={previewSrc} src={previewSrc} title="Live build preview"
+                style={{width:'100%', height:'520px', border:'none', background:'#FAFAF9'}} />
+            </Card>
+          )}
+
           <div className="flex gap-2 mb-4 flex-wrap">
             {['all', 'draft', 'staged', 'live', 'expired'].map(s => (
               <button key={s} onClick={() => setFilter(s)}
@@ -534,9 +576,13 @@
                 </div>
                 {user.role === 'admin' && (
                   <div className="flex gap-2 pt-3 border-t border-dove flex-wrap">
+                    {/* Stage is the only per-program lifecycle action.
+                        Publish / Unpublish were intentionally removed —
+                        all promotion to live happens via the master
+                        Publish All button at the top of the page so the
+                        admin reviews the whole build at once instead of
+                        flipping individual programs in isolation. */}
                     {p.phase === 'draft' && <Button size="sm" onClick={() => handleActivate(p.id)}>Stage</Button>}
-                    {p.phase === 'staged' && <Button size="sm" onClick={() => handlePublish(p.id, p.name)}>Publish</Button>}
-                    {p.phase === 'live' && <Button size="sm" variant="outline" onClick={() => handleUnpublish(p.id, p.name)}>Unpublish</Button>}
                     <Button size="sm" variant="outline" onClick={() => handleClone(p.id)}>Clone</Button>
                     <Button size="sm" variant="ghost" onClick={() => window.open(`/api/settings/bulletin/${p.id}`, '_blank')}>PDF</Button>
                     <Button size="sm" variant="ghost" onClick={() => handleDelete(p.id, p.name)} className="text-error/60 hover:text-error">Delete</Button>

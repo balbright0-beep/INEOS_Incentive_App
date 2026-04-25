@@ -199,6 +199,16 @@
     </div>
   </header>
 
+  <div id="preview-banner" style="display:none;background:linear-gradient(90deg,#FFF7E0 0%,#FFEFC1 100%);border-bottom:1px solid #E8C77A;padding:10px 24px">
+    <div style="max-width:1200px;margin:0 auto;display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="badge" style="background:#B97A00;color:#fff;font-size:9px;letter-spacing:0.1em">PREVIEW</span>
+        <span style="font-size:12.5px;color:#7A5300">Showing <b>staged + live</b> programs as the public page would after publish. Numbers may differ from production.</span>
+      </div>
+      <a href="./" style="font-size:11.5px;color:#7A5300;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;text-decoration:underline">Exit preview \u2192</a>
+    </div>
+  </div>
+
   <main style="max-width:1200px;margin:0 auto;padding:32px 24px 48px">
     <div style="margin-bottom:24px">
       <h1 style="font-size:28px;color:#1D1D1D;margin:0">Find Your Incentive</h1>
@@ -325,6 +335,31 @@
     const fmtMoney = (n) => '$' + Number(n || 0).toLocaleString('en-US', {maximumFractionDigits:0});
     const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
+    // Preview mode: when ?preview=1 is in the URL AND an admin token is in
+    // localStorage (set by the SPA login), the page hits the authenticated
+    // /api/lookup endpoint instead of the public one. That endpoint returns
+    // staged programs too, so admins see the build as it WOULD look after
+    // a master publish. The yellow banner makes it impossible to mistake
+    // this for the live customer-facing view.
+    const PREVIEW_MODE = new URLSearchParams(location.search).get('preview') === '1';
+    const ADMIN_TOKEN = PREVIEW_MODE ? (localStorage.getItem('ims_token') || null) : null;
+    const LOOKUP_ENDPOINT = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/lookup' : '/api/lookup/public';
+    if (PREVIEW_MODE && ADMIN_TOKEN) {
+      document.getElementById('preview-banner').style.display = 'block';
+    } else if (PREVIEW_MODE && !ADMIN_TOKEN) {
+      // Preview was requested but the admin isn't logged in — fall back to
+      // the public endpoint and surface a hint so the admin knows why
+      // staged programs aren't showing up.
+      const b = document.getElementById('preview-banner');
+      b.style.display = 'block';
+      b.style.background = 'linear-gradient(90deg,#FEF2F2 0%,#FECACA 100%)';
+      b.style.borderBottomColor = '#FCA5A5';
+      b.innerHTML = `<div style="max-width:1200px;margin:0 auto;display:flex;align-items:center;gap:10px">
+        <span class="badge" style="background:#7F1D1D;color:#fff;font-size:9px;letter-spacing:0.1em">PREVIEW UNAVAILABLE</span>
+        <span style="font-size:12.5px;color:#7F1D1D">Sign in to the admin app first, then return to this URL. Showing live data only.</span>
+      </div>`;
+    }
+
     let vinActive = false;       // true once a 17-char VIN populated the form
     let vinDebounce = null;
     let zipDebounce = null;
@@ -450,9 +485,13 @@
       };
 
       try {
-        const r = await fetch('/api/lookup/public', {
+        const headers = { 'Content-Type': 'application/json' };
+        if (LOOKUP_ENDPOINT === '/api/lookup' && ADMIN_TOKEN) {
+          headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
+        }
+        const r = await fetch(LOOKUP_ENDPOINT, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers,
           body: JSON.stringify(body),
         });
         if (r.status === 404) {

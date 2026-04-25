@@ -208,6 +208,68 @@ def activate_program(
     return {"message": "Program staged", "phase": "staged", "codes_generated": len(matrix)}
 
 
+@router.post("/publish-all")
+def publish_all_staged(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """
+    Bulk-publish every staged program in one click \u2014 the master
+    "deploy this build" action. Atomic: either every staged program
+    flips to published=True or none do (single transaction). Programs
+    that are already live aren't touched. Drafts can't be published
+    by this endpoint (they have to be staged first), which prevents
+    a stray draft from sneaking onto the public page.
+    """
+    staged = db.query(Program).filter(
+        Program.status == "active",
+        Program.published == False,  # noqa: E712 — SQL boolean compare
+    ).all()
+    if not staged:
+        return {"published": 0, "programs": []}
+    promoted = []
+    for prog in staged:
+        prog.published = True
+        promoted.append({"id": prog.id, "name": prog.name})
+        db.add(AuditLog(
+            entity_type="program", entity_id=prog.id,
+            action="published", user_id=user.id,
+            details={"phase": "live", "via": "publish-all"},
+        ))
+    db.commit()
+    return {"published": len(promoted), "programs": promoted}
+
+
+@router.post("/unpublish-all")
+def unpublish_all_live(
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """
+    Pull every live program back to staged in one shot. Escape hatch
+    for "we just published something wrong, take it down" — the
+    matrix and authenticated lookup are unaffected, only the public
+    /lookup/ page goes dark.
+    """
+    live = db.query(Program).filter(
+        Program.status == "active",
+        Program.published == True,  # noqa: E712
+    ).all()
+    if not live:
+        return {"unpublished": 0, "programs": []}
+    pulled = []
+    for prog in live:
+        prog.published = False
+        pulled.append({"id": prog.id, "name": prog.name})
+        db.add(AuditLog(
+            entity_type="program", entity_id=prog.id,
+            action="unpublished", user_id=user.id,
+            details={"phase": "staged", "via": "unpublish-all"},
+        ))
+    db.commit()
+    return {"unpublished": len(pulled), "programs": pulled}
+
+
 @router.post("/{program_id}/publish")
 def publish_program(
     program_id: str,
