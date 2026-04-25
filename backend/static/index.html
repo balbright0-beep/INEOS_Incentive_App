@@ -699,6 +699,20 @@
         };
       });
       const [saving, setSaving] = React.useState(false);
+      // The eligibility-step option lists derive from the live Products
+      // catalog so anything an admin adds, edits, or deactivates on the
+      // Products screen flows into Program creation/edit on the next
+      // open. Fall back to the hardcoded seed lists below until the
+      // fetch returns (or if it fails) so the wizard never shows empty
+      // option groups.
+      const [products, setProducts] = React.useState(null);
+      React.useEffect(() => {
+        let cancelled = false;
+        API.get('/settings/products')
+          .then(rows => { if (!cancelled) setProducts(rows || []); })
+          .catch(() => { if (!cancelled) setProducts([]); });
+        return () => { cancelled = true; };
+      }, []);
 
       const update = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
@@ -795,25 +809,30 @@
         { value: 'other', label: 'Other' },
       ];
 
-      const bodyStyleOptions = [
-        { value: 'station_wagon', label: 'Station Wagon' },
-        { value: 'quartermaster', label: 'Quartermaster' },
-      ];
+      // Seed values that always show up regardless of catalog state, so
+      // a fresh DB or a failed fetch still gives the admin a usable
+      // wizard. Active products union onto these — anything in the
+      // catalog beyond the seeds (e.g. a typed-in custom trim) appears
+      // as an option here too.
+      const _activeProducts = (products || []).filter(p => p.active !== false);
+      const _bodyStyleSeeds = ['station_wagon', 'quartermaster'];
+      const _modelYearSeeds = ['MY25', 'MY26', 'MY27'];
+      const _trimSeeds = ['Base', 'Fieldmaster', 'Belstaff', 'Trialmaster', 'Highlands', 'Arcane Works Detour'];
 
-      const modelYearOptions = [
-        { value: 'MY25', label: '2025 (MY25)' },
-        { value: 'MY26', label: '2026 (MY26)' },
-        { value: 'MY27', label: '2027 (MY27)' },
-      ];
+      const _formatBody = (b) => (b || '').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const _formatMy   = (my) => `${my && my.replace(/^MY/, '20')} (${my})`;
 
-      const trimOptions = [
-        { value: 'Base', label: 'Base' },
-        { value: 'Fieldmaster', label: 'Fieldmaster' },
-        { value: 'Belstaff', label: 'Belstaff' },
-        { value: 'Trialmaster', label: 'Trialmaster' },
-        { value: 'Highlands', label: 'Highlands' },
-        { value: 'Arcane Works Detour', label: 'Arcane Works Detour' },
-      ];
+      const bodyStyleOptions = Array.from(new Set([
+        ..._bodyStyleSeeds, ..._activeProducts.map(p => p.body_style).filter(Boolean),
+      ])).sort().map(v => ({ value: v, label: _formatBody(v) }));
+
+      const modelYearOptions = Array.from(new Set([
+        ..._modelYearSeeds, ..._activeProducts.map(p => p.model_year).filter(Boolean),
+      ])).sort().map(v => ({ value: v, label: _formatMy(v) }));
+
+      const trimOptions = Array.from(new Set([
+        ..._trimSeeds, ..._activeProducts.map(p => p.trim).filter(Boolean),
+      ])).sort().map(v => ({ value: v, label: v }));
 
       const financeOptions = [
         { value: 'cash', label: 'Cash' },
@@ -828,10 +847,14 @@
         { value: 'western', label: 'Western' },
       ];
 
-      const specialOptions = [
-        { value: 'arcane_works_detour', label: 'Arcane Works Detour' },
-        { value: 'iceland_tactical', label: 'Iceland Tactical' },
-      ];
+      const _specialSeeds = ['arcane_works_detour', 'iceland_tactical'];
+      const specialOptions = Array.from(new Set([
+        ..._specialSeeds,
+        ..._activeProducts.map(p => p.special_edition).filter(Boolean),
+      ])).sort().map(v => ({
+        value: v,
+        label: v.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
+      }));
 
       const stackableOptions = [
         { value: 'customer_cash', label: 'Customer Cash' },
