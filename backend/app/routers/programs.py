@@ -53,6 +53,7 @@ def _enrich_program(db: Session, prog: Program) -> dict:
         "program_type": prog.program_type,
         "status": prog.status,
         "published": bool(getattr(prog, "published", False)),
+        "public_facing": bool(getattr(prog, "public_facing", True)),
         "phase": phase,
         "effective_date": prog.effective_date,
         "expiration_date": prog.expiration_date,
@@ -141,6 +142,7 @@ def create_program(
         budget_units=req.budget_units,
         per_unit_amount=Decimal(str(req.per_unit_amount)) if req.per_unit_amount else Decimal("0"),
         stacking_category=req.stacking_category or req.program_type,
+        public_facing=req.public_facing if req.public_facing is not None else True,
         created_by=user.id,
     )
     db.add(prog)

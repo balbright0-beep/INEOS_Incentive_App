@@ -23,6 +23,15 @@ class Program(Base):
     # published=True promotes to production: visible on the public
     # /lookup/ page and any other unauthenticated surface.
     published = Column(Boolean, nullable=False, default=False, server_default="false")
+    # Document audience flag. True = customer-facing (PDF bulletin
+    # includes the legal disclaimers / advertising disclosures).
+    # False = internal-only (e.g. dealer employee programs) — the
+    # bulletin still generates so the program is documented, but the
+    # customer disclaimer block is skipped because the doc never
+    # leaves dealer/admin hands. Independent of published — a
+    # program can be internal AND on the public lookup, or private
+    # and staged.
+    public_facing = Column(Boolean, nullable=False, default=True, server_default="true")
     effective_date = Column(Date, nullable=False)
     expiration_date = Column(Date, nullable=False)
     budget_amount = Column(Numeric(14, 2), nullable=True)

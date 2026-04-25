@@ -586,7 +586,12 @@
                 <div className="flex items-start justify-between mb-3">
                   <div>
                     <h3 className="font-semibold text-onyx text-sm">{p.name}</h3>
-                    <Badge variant={p.phase || p.status} className="mt-1">{p.phase || p.status}</Badge>
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                      <Badge variant={p.phase || p.status}>{p.phase || p.status}</Badge>
+                      {p.public_facing === false && (
+                        <Badge variant="default" className="bg-iron-smoke/10 text-iron-smoke" title="No customer disclosures in bulletin">internal-only</Badge>
+                      )}
+                    </div>
                   </div>
                   <Badge variant="default">{p.program_type.replace('_', ' ')}</Badge>
                 </div>
@@ -695,6 +700,10 @@
             description: editProgram.description || '',
             budget_amount: editProgram.budget_amount != null ? String(editProgram.budget_amount) : '',
             per_unit_amount: editProgram.per_unit_amount != null ? String(editProgram.per_unit_amount) : '',
+            // Default true on edits where the field's missing (legacy
+            // programs predating the column) so existing programs
+            // keep emitting customer disclaimers in the bulletin.
+            public_facing: editProgram.public_facing !== false,
             body_styles: ruleSel.body_styles.length ? ruleSel.body_styles : ['station_wagon', 'quartermaster'],
             model_years: ruleSel.model_years.length ? ruleSel.model_years : ['MY25', 'MY26'],
             trims: ruleSel.trims,
@@ -709,6 +718,7 @@
         return {
           name: '', program_type: 'customer_cash', effective_date: '2026-04-01', expiration_date: '2026-04-30',
           description: '', budget_amount: '', per_unit_amount: '',
+          public_facing: true,
           // Eligibility selections (converted to rules on save)
           body_styles: ['station_wagon', 'quartermaster'],
           model_years: ['MY25', 'MY26'],
@@ -806,6 +816,7 @@
             description: form.description,
             budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : null,
             per_unit_amount: form.per_unit_amount ? parseFloat(form.per_unit_amount) : 0,
+            public_facing: form.public_facing !== false,
             rules: buildRules(),
           };
           if (isEdit) {
@@ -926,6 +937,29 @@
                 <Input label="Expiration Date" type="date" value={form.expiration_date} onChange={e => update('expiration_date', e.target.value)} />
               </div>
               <Input label="Description" value={form.description} onChange={e => update('description', e.target.value)} placeholder="Internal notes about this program..." />
+              <div>
+                <label className="block text-sm font-medium text-onyx mb-2">Document Audience</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${form.public_facing ? 'border-flare-red bg-flare-red/5' : 'border-mushroom hover:border-iron-smoke'}`}>
+                    <input type="radio" name="public_facing" checked={form.public_facing === true}
+                      onChange={() => update('public_facing', true)}
+                      className="mt-1 accent-flare-red" />
+                    <div>
+                      <div className="text-sm font-semibold text-onyx">Public-facing</div>
+                      <div className="text-xs text-iron-smoke mt-0.5">Bulletin includes the customer advertising disclosures (legal boilerplate, "see retailer for details", etc.).</div>
+                    </div>
+                  </label>
+                  <label className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${form.public_facing === false ? 'border-flare-red bg-flare-red/5' : 'border-mushroom hover:border-iron-smoke'}`}>
+                    <input type="radio" name="public_facing" checked={form.public_facing === false}
+                      onChange={() => update('public_facing', false)}
+                      className="mt-1 accent-flare-red" />
+                    <div>
+                      <div className="text-sm font-semibold text-onyx">Internal-only</div>
+                      <div className="text-xs text-iron-smoke mt-0.5">Skip customer disclosures in the bulletin. Use for dealer employee, friends &amp; family, or programs that never reach a retail customer.</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
               <div className="flex justify-end"><Button onClick={() => setStep(2)}>Next: Eligibility</Button></div>
             </div>
           )}
@@ -1031,6 +1065,7 @@
                   <p><span className="text-silver-dust">Per Unit:</span> <strong>${form.per_unit_amount || 0}</strong></p>
                   <p><span className="text-silver-dust">Budget:</span> <strong>${form.budget_amount || 'No cap'}</strong></p>
                   <p><span className="text-silver-dust">Rules:</span> <strong>{buildRules().length} eligibility rules</strong></p>
+                  <p><span className="text-silver-dust">Audience:</span> <strong>{form.public_facing === false ? 'Internal-only (no customer disclosures)' : 'Public-facing'}</strong></p>
                 </div>
                 <div className="pt-2 mt-2 border-t border-dove text-sm">
                   <p><span className="text-silver-dust">Eligible:</span> {summaryText}</p>

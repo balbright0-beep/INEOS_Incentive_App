@@ -34,6 +34,29 @@ def _ensure_rule_type_state_value() -> None:
         conn.execute(text("ALTER TYPE rule_type ADD VALUE IF NOT EXISTS 'state'"))
 
 
+def _ensure_program_public_facing_column() -> None:
+    """
+    Idempotent ALTER for the public_facing flag. Defaults TRUE so
+    programs that existed before this column landed keep emitting
+    customer disclaimers in their PDF bulletins — only newly-created
+    or explicitly-marked-private programs skip the disclaimer block.
+    """
+    insp = inspect(engine)
+    if "programs" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("programs")}
+    if "public_facing" in cols:
+        return
+    is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+    add_sql = (
+        "ALTER TABLE programs ADD COLUMN public_facing BOOLEAN NOT NULL DEFAULT 1"
+        if is_sqlite
+        else "ALTER TABLE programs ADD COLUMN public_facing BOOLEAN NOT NULL DEFAULT true"
+    )
+    with engine.begin() as conn:
+        conn.execute(text(add_sql))
+
+
 def _ensure_program_published_column() -> None:
     """
     Idempotent ALTER for the production gate. The app uses
@@ -70,6 +93,7 @@ async def lifespan(app: FastAPI):
     # Run idempotent migrations that create_all can't do
     _ensure_rule_type_state_value()
     _ensure_program_published_column()
+    _ensure_program_public_facing_column()
     # Seed data
     db = SessionLocal()
     try:

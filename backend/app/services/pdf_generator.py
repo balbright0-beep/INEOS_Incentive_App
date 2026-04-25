@@ -713,47 +713,62 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     story.append(Spacer(1, 16))
 
     # ── Customer-Facing Advertising Disclosures ──
-    story.append(Paragraph(_spaced("Cash Offer Disclosures"), styles["disclaimer_heading"]))
-    story.append(Spacer(1, 4))
+    # Gated on program.public_facing. Internal-only programs (e.g.
+    # dealer employee, friends & family) skip this entire block —
+    # the customer disclaimer text exists for advertising-compliance
+    # reasons and doesn't apply when the doc never reaches a retail
+    # customer. The "contact your RBM" sign-off stays either way
+    # because that's relevant to internal readers too.
+    public_facing = bool(getattr(program, "public_facing", True))
+    if public_facing:
+        story.append(Paragraph(_spaced("Cash Offer Disclosures"), styles["disclaimer_heading"]))
+        story.append(Spacer(1, 4))
 
-    # Generate per-model disclosures
-    body_styles_for_disclosure = ["Station Wagon", "Quartermaster"]
-    for rule in program.rules:
-        if rule.rule_type == "body_style":
-            vals = rule.value if isinstance(rule.value, list) else [rule.value]
-            body_styles_for_disclosure = [str(v).replace("_", " ").title() for v in vals]
-            break
+        # Generate per-model disclosures
+        body_styles_for_disclosure = ["Station Wagon", "Quartermaster"]
+        for rule in program.rules:
+            if rule.rule_type == "body_style":
+                vals = rule.value if isinstance(rule.value, list) else [rule.value]
+                body_styles_for_disclosure = [str(v).replace("_", " ").title() for v in vals]
+                break
 
-    model_years_for_disclosure = []
-    for rule in program.rules:
-        if rule.rule_type == "model_year":
-            vals = rule.value if isinstance(rule.value, list) else [rule.value]
-            model_years_for_disclosure = [str(v).replace("MY", "20") for v in vals]
-            break
+        model_years_for_disclosure = []
+        for rule in program.rules:
+            if rule.rule_type == "model_year":
+                vals = rule.value if isinstance(rule.value, list) else [rule.value]
+                model_years_for_disclosure = [str(v).replace("MY", "20") for v in vals]
+                break
 
-    if not model_years_for_disclosure:
-        model_years_for_disclosure = ["2025"]
+        if not model_years_for_disclosure:
+            model_years_for_disclosure = ["2025"]
 
-    for my in model_years_for_disclosure:
-        for bs in body_styles_for_disclosure:
-            disclosure = (
-                f"<b>{amount_str} {type_label.title()} (National) \u2014 {my} INEOS Grenadier {bs}:</b> "
-                f"Available on new models purchased {eff_short} through {exp_short}. "
-                f"{type_label.title()} must be applied toward the final transaction price. "
-            )
-            if program.program_type == "customer_cash":
-                disclosure += "Not available with special APR or Retail Finance offers. "
-            disclosure += (
-                "Not redeemable for cash. May not be combined with other incompatible offers. "
-                "Customer must take delivery and sign all required documents during the program period. "
-                "Additional taxes, fees, and dealer-installed equipment may apply. "
-                "Offer valid on in-stock vehicles only and subject to change without notice. "
-                "Additional restrictions may apply. "
-                "INEOS Automotive Americas, LLC reserves the right to modify or terminate this "
-                "program at any time. See retailer for full details."
-            )
-            story.append(Paragraph(disclosure, styles["disclaimer"]))
-            story.append(Spacer(1, 4))
+        for my in model_years_for_disclosure:
+            for bs in body_styles_for_disclosure:
+                disclosure = (
+                    f"<b>{amount_str} {type_label.title()} (National) \u2014 {my} INEOS Grenadier {bs}:</b> "
+                    f"Available on new models purchased {eff_short} through {exp_short}. "
+                    f"{type_label.title()} must be applied toward the final transaction price. "
+                )
+                if program.program_type == "customer_cash":
+                    disclosure += "Not available with special APR or Retail Finance offers. "
+                disclosure += (
+                    "Not redeemable for cash. May not be combined with other incompatible offers. "
+                    "Customer must take delivery and sign all required documents during the program period. "
+                    "Additional taxes, fees, and dealer-installed equipment may apply. "
+                    "Offer valid on in-stock vehicles only and subject to change without notice. "
+                    "Additional restrictions may apply. "
+                    "INEOS Automotive Americas, LLC reserves the right to modify or terminate this "
+                    "program at any time. See retailer for full details."
+                )
+                story.append(Paragraph(disclosure, styles["disclaimer"]))
+                story.append(Spacer(1, 4))
+    else:
+        # Visible reminder so admins reviewing the doc know the
+        # customer disclosures were intentionally suppressed.
+        story.append(Paragraph(
+            "<b>INTERNAL DOCUMENT \u2014</b> customer-facing advertising disclosures suppressed because this program is marked internal-only.",
+            styles["disclaimer"],
+        ))
 
     story.append(Spacer(1, 8))
     story.append(Paragraph(

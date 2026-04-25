@@ -29,6 +29,7 @@ class ProgramCreate(BaseModel):
     budget_units: Optional[int] = None
     per_unit_amount: Optional[float] = 0
     stacking_category: Optional[str] = None
+    public_facing: Optional[bool] = True
     rules: list[ProgramRuleCreate] = []
 
 
@@ -42,6 +43,7 @@ class ProgramUpdate(BaseModel):
     budget_units: Optional[int] = None
     per_unit_amount: Optional[float] = None
     stacking_category: Optional[str] = None
+    public_facing: Optional[bool] = None
     status: Optional[str] = None
     rules: Optional[list[ProgramRuleCreate]] = None
 
