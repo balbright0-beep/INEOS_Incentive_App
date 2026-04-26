@@ -39,44 +39,57 @@ from app.services.stacking import get_stacking_matrix, is_program_applicable
 MAX_CODE_LEN = 10
 
 
+# Model year → VIN-standard 10th-character letter. Lines up with the
+# decoding table in lookup.vin_lookup so a code's MY suffix matches
+# the letter a retailer would see in the VIN itself. Letters only
+# (no digits anywhere in campaign codes — SAP requirement).
+MY_TO_LETTER = {
+    "MY24": "R",
+    "MY25": "S",
+    "MY26": "T",
+    "MY27": "V",  # skips U per VIN standard
+    "MY28": "W",
+    "MY29": "X",
+    "MY30": "Y",
+}
+
+
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
                          loyalty: bool, conquest: bool, special: str | None) -> str:
     """
-    Generate a campaign code string. Always includes a model-year
-    digit so MY25 / MY26 / MY27 produce distinct codes — without
-    that suffix the dedup in rebuild_matrix collapsed them and the
-    retailer lookup for the dropped year returned 404.
+    Generate a campaign code string. Letters only — no digits — so
+    SAP accepts the code. MY25 / MY26 / MY27 produce distinct codes
+    via the MY_TO_LETTER mapping (S / T / V), matching the VIN-MY
+    convention so the suffix is mnemonic rather than arbitrary.
 
-    Format: <prefix><body><my_digit>[<flags>]. The MY digit is the
-    last char of the MY string ("MY25" → "5", "MY26" → "6") so the
-    legacy 'D'-suffix codes are gone in favor of consistent
-    versioning.
+    Format: <prefix><body><my_letter>[<flags>].
     """
 
     is_qm = body_style == "quartermaster"
     body_short = "QM" if is_qm else "SW"
-    body_initial = "Q" if is_qm else "S"
 
-    # MY digit: "MY25" → "5", "MY26" → "6". Required so MY25 and
-    # MY26 never collide on the same code string.
-    my_digit = (model_year or "")[-1] if model_year else ""
+    # MY letter (S / T / V / ...) — required so different model years
+    # never collide on the same code string. Falls back to "" when MY
+    # is missing or unmapped, which keeps the function pure but means
+    # the matrix dedup will collapse cross-MY codes for unknown years.
+    my_letter = MY_TO_LETTER.get(model_year or "", "")
 
     # ── Special editions (Arcane Works, Iceland Tactical) ──
     if special:
         sp_map = {"arcane_works_detour": "ARD", "iceland_tactical": "ICE"}
         sp = sp_map.get(special, special[:3].upper())
-        base = f"US{sp}{my_digit}"
+        base = f"US{sp}{my_letter}"
         if loyalty:
             return f"{base}L"[:MAX_CODE_LEN]
         return f"{base}C"[:MAX_CODE_LEN]
 
     # ── CVP ──
     if deal_type == "cvp":
-        return f"USCVP{my_digit}"[:MAX_CODE_LEN]
+        return f"USCVP{my_letter}"[:MAX_CODE_LEN]
 
     # ── Demonstrator ──
     if deal_type == "demo":
-        return f"USDEMO{my_digit}"[:MAX_CODE_LEN]
+        return f"USDEM{my_letter}"[:MAX_CODE_LEN]
 
     flag_suffix = ""
     if loyalty and conquest:
@@ -86,20 +99,20 @@ def generate_code_string(body_style: str, model_year: str, deal_type: str,
     elif conquest:
         flag_suffix = "C"
 
-    # ── Cash deals ──  USC + body + my + flags  (e.g. USCSW6, USCQM6L, USCSW5LC)
+    # ── Cash deals ──  USC + body + my + flags  (e.g. USCSWT, USCQMTL, USCSWSLC)
     if deal_type == "cash":
-        return f"USC{body_short}{my_digit}{flag_suffix}"[:MAX_CODE_LEN]
+        return f"USC{body_short}{my_letter}{flag_suffix}"[:MAX_CODE_LEN]
 
-    # ── APR deals ──  USA + body + my + flags  (e.g. USASW6, USAQM6L)
+    # ── APR deals ──  USA + body + my + flags  (e.g. USASWT, USAQMTL)
     if deal_type == "apr":
-        return f"USA{body_short}{my_digit}{flag_suffix}"[:MAX_CODE_LEN]
+        return f"USA{body_short}{my_letter}{flag_suffix}"[:MAX_CODE_LEN]
 
-    # ── Lease deals ──  USL + body + my + flags  (e.g. USLSW6, USLQM6L)
+    # ── Lease deals ──  USL + body + my + flags  (e.g. USLSWT, USLQMTL)
     if deal_type == "lease":
-        return f"USL{body_short}{my_digit}{flag_suffix}"[:MAX_CODE_LEN]
+        return f"USL{body_short}{my_letter}{flag_suffix}"[:MAX_CODE_LEN]
 
     # Fallback
-    return f"US{body_short}{my_digit}"[:MAX_CODE_LEN]
+    return f"US{body_short}{my_letter}"[:MAX_CODE_LEN]
 
 
 def evaluate_rule(rule: ProgramRule, config: dict) -> bool:
