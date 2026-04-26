@@ -251,6 +251,20 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
         if total_amount == 0 and deal_type not in ("demo", "apr", "lease"):
             continue
 
+        # Loyalty / conquest gate. The outer loop generates configs for
+        # every combination of loyalty and conquest flags, but those
+        # flags are only meaningful if a matching loyalty/conquest
+        # program is actually contributing. Without that, the base
+        # programs (customer_cash, lease_cash, etc.) still match the
+        # config and we'd emit a code that claims loyalty/conquest
+        # applies while paying the exact same amount as the non-
+        # loyalty / non-conquest version. Skip those — they'd just be
+        # noise in the matrix and the public lookup.
+        if config["loyalty"] and not any(l["program_type"] == "loyalty" for l in matching_layers):
+            continue
+        if config["conquest"] and not any(l["program_type"] == "conquest" for l in matching_layers):
+            continue
+
         code_str = generate_code_string(
             config["body_style"], config["model_year"], deal_type,
             config["loyalty"], config["conquest"], config.get("special_edition")
