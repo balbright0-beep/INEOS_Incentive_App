@@ -289,7 +289,14 @@ def publish_all_staged(
             details={"phase": "live", "via": "publish-all"},
         ))
     db.commit()
-    return {"published": len(promoted), "programs": promoted}
+    # Refresh the matrix on every publish so any matrix-logic change
+    # since the last activate (e.g. the loyalty/conquest gate) takes
+    # effect at deploy time. Matrix contents don't depend on
+    # published, but rebuilding here gives admins a single "click and
+    # everything's fresh" action instead of asking them to remember
+    # to hit Rebuild on the Code Matrix page.
+    matrix = rebuild_matrix(db)
+    return {"published": len(promoted), "programs": promoted, "codes_total": len(matrix)}
 
 
 @router.post("/unpublish-all")
@@ -319,7 +326,8 @@ def unpublish_all_live(
             details={"phase": "staged", "via": "unpublish-all"},
         ))
     db.commit()
-    return {"unpublished": len(pulled), "programs": pulled}
+    matrix = rebuild_matrix(db)
+    return {"unpublished": len(pulled), "programs": pulled, "codes_total": len(matrix)}
 
 
 @router.post("/{program_id}/publish")

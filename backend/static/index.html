@@ -504,6 +504,18 @@
         } catch (e) { toast.show(e.message, 'error'); }
       }
 
+      async function handleRebuildMatrix() {
+        // Manual escape hatch: the matrix only auto-rebuilds on stage
+        // / publish / unpublish. If the underlying generation logic
+        // changes (or someone wants to be sure the preview reflects
+        // current code), this kicks it explicitly.
+        try {
+          const res = await API.post('/codes/rebuild');
+          toast.show(`Matrix rebuilt — ${res.total_codes} code${res.total_codes === 1 ? '' : 's'}`);
+          load();
+        } catch (e) { toast.show(e.message, 'error'); }
+      }
+
       // Force the embedded preview iframe to re-fetch after every load()
       // so the admin sees the build update as soon as a program is staged.
       const previewSrc = `/lookup/?preview=1&t=${Date.now()}`;
@@ -554,6 +566,7 @@
                   </div>
                 </div>
                 <div className="flex gap-2 flex-wrap">
+                  <Button size="sm" variant="ghost" onClick={handleRebuildMatrix} className="text-iron-smoke" title="Regenerate the campaign code matrix from scratch — useful after editing program rules or amounts so the preview reflects the latest.">↻ Rebuild Matrix</Button>
                   <Button size="sm" variant="outline" onClick={() => window.open(previewSrc, '_blank')}>↗ Open Preview Full Screen</Button>
                   {liveCount > 0 && <Button size="sm" variant="ghost" onClick={handleUnpublishAll} className="text-iron-smoke">Unpublish All</Button>}
                   <Button size="sm" onClick={handlePublishAll} disabled={stagedCount === 0}>
