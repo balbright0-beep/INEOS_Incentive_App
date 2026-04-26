@@ -83,13 +83,16 @@ def generate_code_string(body_style: str, model_year: str, deal_type: str,
             return f"{base}L"[:MAX_CODE_LEN]
         return f"{base}C"[:MAX_CODE_LEN]
 
-    # ── CVP ──
+    # ── CVP ──  USCVP + body + my  (e.g. USCVPSWT, USCVPQMS)
+    # Body must appear in the code, otherwise SW and QM collapse to
+    # the same string and the matrix dedup drops one — that was the
+    # cause of the missing station-wagon CVP code.
     if deal_type == "cvp":
-        return f"USCVP{my_letter}"[:MAX_CODE_LEN]
+        return f"USCVP{body_short}{my_letter}"[:MAX_CODE_LEN]
 
-    # ── Demonstrator ──
+    # ── Demonstrator ──  USDEM + body + my  (same dedup reason)
     if deal_type == "demo":
-        return f"USDEM{my_letter}"[:MAX_CODE_LEN]
+        return f"USDEM{body_short}{my_letter}"[:MAX_CODE_LEN]
 
     flag_suffix = ""
     if loyalty and conquest:
