@@ -11,7 +11,10 @@ class CampaignCode(Base):
     __tablename__ = "campaign_codes"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    code = Column(String(6), unique=True, nullable=False, index=True)
+    # Bumped from 6 → 10 so APR/Lease codes can carry a model-year
+    # digit without collision (USAPSW used to be the same string for
+    # MY25 and MY26, dropping one). Existing 6-char codes stay valid.
+    code = Column(String(10), unique=True, nullable=False, index=True)
     label = Column(String(300), nullable=True)
     support_amount = Column(Numeric(10, 2), nullable=False, default=0)
     model_year = Column(String(10), nullable=True)

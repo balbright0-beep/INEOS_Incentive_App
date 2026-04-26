@@ -29,84 +29,77 @@ from app.services.stacking import get_stacking_matrix, is_program_applicable
 #   LEASE: USLESW, USLESL, USLFNS, USLLNS, USLEEL, USLLEL
 #   OTHER: USARDC, USARDL, USCVP, USDEMO
 
-MAX_CODE_LEN = 6
+# Bumped from 6 → 10 so APR/Lease/etc codes can carry a model-year
+# suffix without colliding. Codes were previously truncated to 6,
+# which meant USAPSW (APR Station Wagon) was the same string for
+# MY25 and MY26 — the matrix builder's dedup kept whichever ran
+# first and silently dropped the other, so the retailer lookup for
+# MY26 SW returned 404. Existing 6-char codes (USCAQM, USLESW)
+# stay valid; new codes can grow.
+MAX_CODE_LEN = 10
 
 
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
                          loyalty: bool, conquest: bool, special: str | None) -> str:
-    """Generate a campaign code string. Strict 6-character limit."""
+    """
+    Generate a campaign code string. Always includes a model-year
+    digit so MY25 / MY26 / MY27 produce distinct codes — without
+    that suffix the dedup in rebuild_matrix collapsed them and the
+    retailer lookup for the dropped year returned 404.
+
+    Format: <prefix><body><my_digit>[<flags>]. The MY digit is the
+    last char of the MY string ("MY25" → "5", "MY26" → "6") so the
+    legacy 'D'-suffix codes are gone in favor of consistent
+    versioning.
+    """
 
     is_qm = body_style == "quartermaster"
-    is_my26_plus = model_year and model_year >= "MY26"
     body_short = "QM" if is_qm else "SW"
-    body_initial = "Q" if is_qm else "S"  # Single char for tight codes
-    d = "D" if is_my26_plus else ""        # MY26+ suffix
+    body_initial = "Q" if is_qm else "S"
+
+    # MY digit: "MY25" → "5", "MY26" → "6". Required so MY25 and
+    # MY26 never collide on the same code string.
+    my_digit = (model_year or "")[-1] if model_year else ""
 
     # ── Special editions (Arcane Works, Iceland Tactical) ──
     if special:
         sp_map = {"arcane_works_detour": "ARD", "iceland_tactical": "ICE"}
         sp = sp_map.get(special, special[:3].upper())
-        base = f"US{sp}"  # 5 chars
+        base = f"US{sp}{my_digit}"
         if loyalty:
-            return f"{base}L"[:MAX_CODE_LEN]  # USARDL, USICEL
-        return f"{base}C"[:MAX_CODE_LEN]      # USARDC, USICEC
+            return f"{base}L"[:MAX_CODE_LEN]
+        return f"{base}C"[:MAX_CODE_LEN]
 
     # ── CVP ──
     if deal_type == "cvp":
-        return "USCVP"
+        return f"USCVP{my_digit}"[:MAX_CODE_LEN]
 
     # ── Demonstrator ──
     if deal_type == "demo":
-        return "USDEMO"
+        return f"USDEMO{my_digit}"[:MAX_CODE_LEN]
 
-    # ── Cash deals ──
+    flag_suffix = ""
+    if loyalty and conquest:
+        flag_suffix = "LC"
+    elif loyalty:
+        flag_suffix = "L"
+    elif conquest:
+        flag_suffix = "C"
+
+    # ── Cash deals ──  USC + body + my + flags  (e.g. USCSW6, USCQM6L, USCSW5LC)
     if deal_type == "cash":
-        if conquest and loyalty:
-            # USFNFL (SW MY25), USFNQL (QM MY25), USFNFD (SW MY26), USFDQL (QM MY26)
-            if is_qm:
-                return f"USFD{body_initial}L" if d else f"USFN{body_initial}L"
-            return f"USFNF{d}" if d else "USFNFL"
-        if conquest:
-            # USFNF (SW MY25), USFNQM (QM MY25), USFND (SW MY26), USFNQD (QM MY26)
-            if is_qm:
-                return f"USFN{body_initial}{d}" if d else f"USFN{body_short}"
-            return f"USFN{d}F" if d else "USFNF"
-        if loyalty:
-            # USSWL (SW MY25), USQML (QM MY25), USSWLD (SW MY26), USQMLD (QM MY26)
-            return f"US{body_short}L{d}"
-        # Base: USSW, USQM, USSWD, USQMD
-        return f"US{body_short}{d}"
+        return f"USC{body_short}{my_digit}{flag_suffix}"[:MAX_CODE_LEN]
 
-    # ── APR deals ──
+    # ── APR deals ──  USA + body + my + flags  (e.g. USASW6, USAQM6L)
     if deal_type == "apr":
-        if conquest and loyalty:
-            # USALNS (SW), USALNQ (QM)
-            return f"USALN{body_initial}"
-        if conquest:
-            # USASFN (SW), USAQFN (QM)
-            return f"USA{body_initial}FN"
-        if loyalty:
-            # USAPSL (SW), USAPQL (QM)
-            return f"USAP{body_initial}L"
-        # Base: USAPSW, USAPQM
-        return f"USAP{body_short}"
+        return f"USA{body_short}{my_digit}{flag_suffix}"[:MAX_CODE_LEN]
 
-    # ── Lease deals ──
+    # ── Lease deals ──  USL + body + my + flags  (e.g. USLSW6, USLQM6L)
     if deal_type == "lease":
-        if conquest and loyalty:
-            # USLLNS (SW), USLLNQ (QM)
-            return f"USLLN{body_initial}"
-        if conquest:
-            # USLFNS (SW), USLFNQ (QM)
-            return f"USLFN{body_initial}"
-        if loyalty:
-            # USLESL (SW), USLEQL (QM)
-            return f"USLE{body_initial}L"
-        # Base: USLESW, USLEQM
-        return f"USLE{body_short}"
+        return f"USL{body_short}{my_digit}{flag_suffix}"[:MAX_CODE_LEN]
 
     # Fallback
-    return f"US{body_short}{d}"[:MAX_CODE_LEN]
+    return f"US{body_short}{my_digit}"[:MAX_CODE_LEN]
 
 
 def evaluate_rule(rule: ProgramRule, config: dict) -> bool:

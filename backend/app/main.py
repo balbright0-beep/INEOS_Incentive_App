@@ -34,6 +34,35 @@ def _ensure_rule_type_state_value() -> None:
         conn.execute(text("ALTER TYPE rule_type ADD VALUE IF NOT EXISTS 'state'"))
 
 
+def _ensure_campaign_code_width() -> None:
+    """
+    Idempotent ALTER for the campaign_codes.code column width.
+    Was String(6); bumped to String(10) so APR/Lease codes can
+    embed a model-year digit. Postgres-only — SQLite doesn't
+    enforce VARCHAR length so its CHECK constraint already
+    accepts any length.
+    """
+    if not settings.DATABASE_URL.startswith("postgres"):
+        return
+    insp = inspect(engine)
+    if "campaign_codes" not in insp.get_table_names():
+        return
+    cols = {c["name"]: c for c in insp.get_columns("campaign_codes")}
+    code_col = cols.get("code")
+    if not code_col:
+        return
+    # SQLAlchemy reports type as e.g. VARCHAR(6); read .length when
+    # available. Skip if already >= 10.
+    existing_len = getattr(getattr(code_col.get("type"), "length", None), "real", None) or getattr(code_col.get("type"), "length", None)
+    try:
+        if existing_len and int(existing_len) >= 10:
+            return
+    except (TypeError, ValueError):
+        pass
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TABLE campaign_codes ALTER COLUMN code TYPE VARCHAR(10)"))
+
+
 def _ensure_program_not_stackable_column() -> None:
     """
     Idempotent ALTER for the per-program stacking exclusion list.
@@ -117,6 +146,7 @@ async def lifespan(app: FastAPI):
     _ensure_program_published_column()
     _ensure_program_public_facing_column()
     _ensure_program_not_stackable_column()
+    _ensure_campaign_code_width()
     # Seed data
     db = SessionLocal()
     try:
