@@ -372,10 +372,14 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
 
     seen_codes = {}
     for item in new_matrix:
-        code_str = item["code"][:6]  # Enforce 6-char max
+        # Dedup on the FULL code string. Truncating to 6 was a relic
+        # from when MAX_CODE_LEN was 6 and base/loyalty/conquest
+        # variants for the same body+MY+deal happened to share a
+        # 6-char prefix (e.g. USCSWS base vs USCSWSL loyalty both
+        # hashed to "USCSWS"). The truncation silently dropped the
+        # variants — first iteration won, the rest disappeared.
+        code_str = item["code"]
         if code_str in seen_codes:
-            # Duplicate code = same deal configuration already covered. Skip it.
-            # This happens when multiple special editions map to the same code pattern.
             continue
         seen_codes[code_str] = item
 
