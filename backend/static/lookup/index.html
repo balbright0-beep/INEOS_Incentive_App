@@ -695,37 +695,119 @@
       }
     });
 
+    // Cached on the last lookup so the chooser checkboxes can re-
+    // calculate without another network round-trip. Cleared on a new
+    // form submit.
+    let _lastLookup = null;
+    let _selectedProgramIds = new Set();
+
     function renderResult(r) {
-      const layers = (r.layers || []).map(l => `
-        <div class="layer-row">
-          <span>${escapeHtml(l.program_name)}</span>
-          <span style="font-weight:600">${fmtMoney(l.amount)}</span>
-        </div>`).join('');
+      _lastLookup = r;
+      // Default selection: everything the matrix already auto-stacked.
+      // Retailer can drop any of them or pull in alternatives below.
+      _selectedProgramIds = new Set(
+        (r.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id)
+      );
+      _renderSelection();
+    }
+
+    function _renderSelection() {
+      const r = _lastLookup;
+      if (!r) return;
+      const eligible = r.eligible_programs || [];
+      // Compute the displayed total from current selection (so toggles
+      // update live without refetching).
+      let total = 0;
+      const selectedIds = _selectedProgramIds;
+      const conflictWarnings = [];
+      for (const p of eligible) {
+        if (!selectedIds.has(p.program_id)) continue;
+        total += p.amount;
+        for (const otherId of (p.conflicts_with || [])) {
+          if (selectedIds.has(otherId)) {
+            const other = eligible.find(x => x.program_id === otherId);
+            if (other) conflictWarnings.push(`${p.program_name} cannot be combined with ${other.program_name}`);
+          }
+        }
+      }
+      // De-dupe the conflict messages (each pair fires twice otherwise).
+      const conflictSet = Array.from(new Set(conflictWarnings));
+
+      const chooserRows = eligible.map(p => {
+        const isSelected = selectedIds.has(p.program_id);
+        const auto = p.auto_selected ? '<span class="pill-tag" style="background:#E6F4EA;color:#1D6813;margin-left:6px">DEFAULT</span>' : '<span class="pill-tag" style="background:#FFF7E0;color:#7A5300;margin-left:6px">ALTERNATIVE</span>';
+        const conflictHint = (p.conflicts_with || []).length
+          ? `<div style="font-size:11px;color:#9F9F9F;margin-top:2px">Mutually exclusive with ${(p.conflicts_with || []).map(id => {
+              const other = eligible.find(x => x.program_id === id);
+              return other ? escapeHtml(other.program_name) : id.slice(0, 8);
+            }).join(', ')}</div>`
+          : '';
+        return `
+          <label style="display:flex;align-items:flex-start;gap:12px;padding:12px;border:1px solid ${isSelected ? '#FF4639' : '#E9E8E5'};background:${isSelected ? 'rgba(255,70,57,0.04)' : '#fff'};border-radius:4px;cursor:pointer;transition:border-color .15s">
+            <input type="checkbox" ${isSelected ? 'checked' : ''}
+              data-program-id="${escapeHtml(p.program_id)}"
+              onchange="_toggleProgram('${escapeHtml(p.program_id)}', this.checked)"
+              style="margin-top:3px;width:16px;height:16px;accent-color:#FF4639;cursor:pointer">
+            <div style="flex:1;min-width:0">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap">
+                <div style="font-weight:600;color:#1D1D1D">${escapeHtml(p.program_name)}${auto}</div>
+                <div class="mono" style="font-weight:700;color:${isSelected ? '#2C931E' : '#9F9F9F'}">${fmtMoney(p.amount)}</div>
+              </div>
+              <div style="font-size:11px;color:#606060;margin-top:2px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">${escapeHtml((p.program_type || '').replace('_', ' ').toUpperCase())}</div>
+              ${conflictHint}
+            </div>
+          </label>`;
+      }).join('');
+
+      const totalChanged = Math.abs(total - r.total_support_amount) > 0.01;
+      const totalColor = total === 0 ? '#9F9F9F' : '#2C931E';
+      const codeBlock = total === 0
+        ? `<div style="display:inline-block;background:#9F9F9F;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
+             <span style="font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.08em;font-weight:600">NO INCENTIVE</span>
+           </div>
+           <p style="font-size:12.5px;color:#606060;margin-top:6px">Customer is waiving every available program for this deal.</p>`
+        : `<div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
+             <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
+           </div>
+           <p style="font-size:32px;font-weight:700;color:${totalColor};margin:0">${fmtMoney(total)}</p>
+           <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">${totalChanged ? `Adjusted from default ${fmtMoney(r.total_support_amount)} based on selection` : 'Total Support Amount'}${r.label ? ' \u00b7 ' + escapeHtml(r.label) : ''}</p>`;
+
+      const conflictBanner = conflictSet.length
+        ? `<div style="margin-bottom:12px;padding:10px 14px;background:#FEF2F2;border-left:3px solid #C4281D;border-radius:0 4px 4px 0;font-size:12.5px;color:#7F1D1D">
+             <b>Selection conflict:</b> ${conflictSet.map(s => escapeHtml(s)).join(' \u00b7 ')}
+           </div>`
+        : '';
+
       const na = (r.not_applicable || []).map(x => `
         <div class="na-row">
           <span>${escapeHtml(x.label || x.program_type)}</span>
           <span style="font-style:italic;color:#9F9F9F">${escapeHtml(x.reason || '')}</span>
         </div>`).join('');
 
-      const html = `
+      $('results').innerHTML = `
         <div class="card fade-in" style="padding:32px;text-align:center;border:2px solid rgba(255,70,57,0.2);margin-bottom:16px">
           <p class="eyebrow" style="margin:0 0 8px">Campaign Code</p>
-          <div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
-            <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
-          </div>
-          <p style="font-size:32px;font-weight:700;color:#2C931E;margin:0">${fmtMoney(r.total_support_amount)}</p>
-          <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">Total Support Amount${r.label ? ' · ' + escapeHtml(r.label) : ''}</p>
+          ${codeBlock}
           <div style="margin-top:12px;font-size:11px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">
-            ${escapeHtml(r.model_year)} · ${escapeHtml((r.body_style || '').replace('_',' ').toUpperCase())} · ${escapeHtml((r.deal_type || '').toUpperCase())}${r.loyalty ? ' · LOYALTY' : ''}${r.conquest ? ' · CONQUEST' : ''}
+            ${escapeHtml(r.model_year)} \u00b7 ${escapeHtml((r.body_style || '').replace('_',' ').toUpperCase())} \u00b7 ${escapeHtml((r.deal_type || '').toUpperCase())}${r.loyalty ? ' \u00b7 LOYALTY' : ''}${r.conquest ? ' \u00b7 CONQUEST' : ''}
           </div>
         </div>
 
-        <div class="card fade-in" style="padding:24px;margin-bottom:16px">
-          <h3 class="eyebrow" style="margin:0 0 12px;color:#1D1D1D">Incentive Breakdown</h3>
-          ${layers || '<p style="font-size:13px;color:#9F9F9F">No contributing programs.</p>'}
-          <div class="total-row">
-            <span>TOTAL SUPPORT</span>
-            <span style="color:#2C931E">${fmtMoney(r.total_support_amount)}</span>
+        ${conflictBanner}
+
+        <div class="card fade-in" style="padding:20px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+            <div>
+              <h3 class="eyebrow" style="margin:0;color:#1D1D1D">Choose Programs to Apply</h3>
+              <p style="font-size:11.5px;color:#606060;margin:4px 0 0">Default selection auto-stacks everything compatible. Toggle any program to include or skip it.</p>
+            </div>
+            <div style="display:flex;gap:6px">
+              <button type="button" onclick="_chooserSelectAuto()" style="background:#fff;border:1px solid #E9E8E5;color:#1D1D1D;padding:6px 10px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;cursor:pointer">Reset to Default</button>
+              <button type="button" onclick="_chooserClearAll()" style="background:#fff;border:1px solid #E9E8E5;color:#7F1D1D;padding:6px 10px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;cursor:pointer">Clear All</button>
+            </div>
+          </div>
+          <div style="display:grid;gap:8px">
+            ${chooserRows || '<p style="font-size:13px;color:#9F9F9F">No eligible programs for this configuration.</p>'}
           </div>
         </div>
 
@@ -734,9 +816,23 @@
           <h3 class="eyebrow" style="margin:0 0 12px;color:#606060">Not Applicable to This Deal</h3>
           ${na}
         </div>` : ''}`;
-
-      $('results').innerHTML = html;
     }
+
+    window._toggleProgram = function (id, checked) {
+      if (checked) _selectedProgramIds.add(id);
+      else _selectedProgramIds.delete(id);
+      _renderSelection();
+    };
+    window._chooserSelectAuto = function () {
+      const r = _lastLookup;
+      if (!r) return;
+      _selectedProgramIds = new Set((r.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id));
+      _renderSelection();
+    };
+    window._chooserClearAll = function () {
+      _selectedProgramIds = new Set();
+      _renderSelection();
+    };
 
     // ───────────── Share button ─────────────
     $('share-btn').addEventListener('click', async () => {

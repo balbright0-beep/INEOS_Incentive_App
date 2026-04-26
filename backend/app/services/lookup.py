@@ -3,8 +3,9 @@
 from sqlalchemy.orm import Session
 from app.models.campaign_code import CampaignCode, CampaignCodeLayer
 from app.models.program import Program, ProgramRule
-from app.schemas.lookup import LookupRequest, LookupResponse, IncentiveLayer
+from app.schemas.lookup import LookupRequest, LookupResponse, IncentiveLayer, EligibleProgram
 from app.services.stacking import get_stacking_matrix
+from app.services.code_matrix import is_program_applicable, program_matches_config
 
 
 def _program_has_state_restriction(db: Session, program_id: str) -> list[str] | None:
@@ -137,15 +138,81 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
             "reason": "No competitive trade-in indicated",
         })
 
+    # Build the eligible-programs chooser. The matrix code's layers
+    # are the auto-stacked default; eligible_programs enumerates ALL
+    # programs that pass the config filters so the retailer can opt
+    # any of them in or out (including programs the matrix dropped due
+    # to per-program stacking conflicts). Each row carries the conflict
+    # list so the UI can warn / disable on incompatible toggles.
+    eligible_programs = _build_eligible_programs(
+        db, deal_type, req, customer_state, layers_data, public_only,
+    )
+
     return LookupResponse(
         code=code.code,
         total_support_amount=total_amount,
         label=code.label or "",
         layers=layers,
         not_applicable=not_applicable,
+        eligible_programs=eligible_programs,
         model_year=req.model_year,
         body_style=req.body_style,
         deal_type=deal_type,
         loyalty=req.loyalty,
         conquest=req.conquest,
     )
+
+
+def _build_eligible_programs(db: Session, deal_type: str, req, customer_state, layers_data, public_only: bool) -> list[EligibleProgram]:
+    # Reproduce the matching logic from code_matrix.rebuild_matrix so
+    # the chooser sees every program that COULD apply, not just the
+    # ones the matrix bundled. We deliberately re-derive instead of
+    # querying the matrix code's layers because the matrix already
+    # resolves conflicts (drops the lower-amount program) — and the
+    # retailer needs to see the dropped program as a togglable
+    # alternative.
+    config = {
+        "body_style": req.body_style,
+        "model_year": req.model_year,
+        "finance_type": deal_type,
+        "loyalty": bool(req.loyalty),
+        "conquest": bool(req.conquest),
+        "special_edition": req.special_edition,
+    }
+    stacking = get_stacking_matrix(db)
+    active_programs = db.query(Program).filter(Program.status == "active").all()
+    if public_only:
+        active_programs = [p for p in active_programs if getattr(p, "published", False)]
+
+    auto_ids = {prog.id for _, prog in layers_data}
+    eligible: list[EligibleProgram] = []
+    for prog in active_programs:
+        if not is_program_applicable(deal_type, prog.program_type, stacking):
+            continue
+        if not program_matches_config(prog, config):
+            continue
+        # Loyalty/conquest type-gating mirrors the matrix builder.
+        if prog.program_type == "loyalty" and not config["loyalty"]:
+            continue
+        if prog.program_type == "conquest" and not config["conquest"]:
+            continue
+        # State-restriction filter — the program is removed entirely
+        # from the chooser (rather than shown disabled) because it
+        # genuinely doesn't apply to this customer.
+        if customer_state:
+            allowed_states = _program_has_state_restriction(db, prog.id)
+            if allowed_states is not None and customer_state not in allowed_states:
+                continue
+        eligible.append(EligibleProgram(
+            program_id=prog.id,
+            program_name=prog.name,
+            program_type=prog.program_type,
+            amount=float(prog.per_unit_amount or 0),
+            auto_selected=(prog.id in auto_ids),
+            conflicts_with=list(getattr(prog, "not_stackable_program_ids", None) or []),
+        ))
+    # Sort: auto-selected first (descending amount), then alternatives
+    # (descending amount). Keeps the default stack at the top of the
+    # chooser so the retailer's eye lands on what's already applied.
+    eligible.sort(key=lambda e: (not e.auto_selected, -e.amount))
+    return eligible

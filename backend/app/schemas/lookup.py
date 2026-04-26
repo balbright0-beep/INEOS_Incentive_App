@@ -26,12 +26,29 @@ class IncentiveLayer(BaseModel):
     amount: float
 
 
+class EligibleProgram(BaseModel):
+    """One pickable program in the retailer-facing chooser. The Find
+    tab presents these as toggles so the retailer can include or skip
+    any program before generating the final total. `auto_selected`
+    indicates whether this program is in the matrix code's default
+    layer set (i.e. would be applied if the retailer accepts the
+    auto-stack); `conflicts_with` lists program ids that can't co-
+    exist with this one — the UI uses both to enable smart toggles."""
+    program_id: str
+    program_name: str
+    program_type: str
+    amount: float
+    auto_selected: bool
+    conflicts_with: list[str] = []
+
+
 class LookupResponse(BaseModel):
     code: str
     total_support_amount: float
     label: str
     layers: list[IncentiveLayer]
     not_applicable: list[dict] = []
+    eligible_programs: list[EligibleProgram] = []
     model_year: str
     body_style: str
     deal_type: str
