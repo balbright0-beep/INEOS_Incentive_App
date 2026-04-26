@@ -8,7 +8,11 @@ DEFAULT_STACKING = {
     "cash": ["bonus_cash", "customer_cash", "loyalty", "conquest", "tactical"],
     "apr": ["bonus_cash", "apr_cash", "loyalty", "conquest", "tactical"],
     "lease": ["bonus_cash", "lease_cash", "loyalty", "conquest", "tactical"],
-    "cvp": ["bonus_cash", "cvp"],
+    # CVP is a standalone retailer/employee channel — by OEM convention
+    # it does NOT combine with other retail incentives. Removing
+    # bonus_cash here keeps a Friends & Family-style program from
+    # silently stacking onto every CVP code.
+    "cvp": ["cvp"],
     "demo": ["bonus_cash", "demonstrator"],
 }
 

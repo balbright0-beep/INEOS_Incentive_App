@@ -34,6 +34,25 @@ def _ensure_rule_type_state_value() -> None:
         conn.execute(text("ALTER TYPE rule_type ADD VALUE IF NOT EXISTS 'state'"))
 
 
+def _ensure_cvp_stacking_rules() -> None:
+    """
+    Idempotent fix-up for the cvp/bonus_cash StackingRule. The seed
+    originally wrote allowed='Y' for that pair (matching the old
+    DEFAULT_STACKING), so existing DBs keep stacking bonus_cash
+    programs onto CVP codes even after the default flips. Force the
+    row to allowed='N' if it exists. Runs every boot but no-ops once
+    the row is already 'N'.
+    """
+    insp = inspect(engine)
+    if "stacking_rules" not in insp.get_table_names():
+        return
+    with engine.begin() as conn:
+        conn.execute(text(
+            "UPDATE stacking_rules SET allowed = 'N' "
+            "WHERE deal_type = 'cvp' AND program_type = 'bonus_cash' AND allowed = 'Y'"
+        ))
+
+
 def _ensure_campaign_code_width() -> None:
     """
     Idempotent ALTER for the campaign_codes.code column width.
@@ -147,6 +166,7 @@ async def lifespan(app: FastAPI):
     _ensure_program_public_facing_column()
     _ensure_program_not_stackable_column()
     _ensure_campaign_code_width()
+    _ensure_cvp_stacking_rules()
     # Seed data
     db = SessionLocal()
     try:
