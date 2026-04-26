@@ -54,6 +54,7 @@ def _enrich_program(db: Session, prog: Program) -> dict:
         "status": prog.status,
         "published": bool(getattr(prog, "published", False)),
         "public_facing": bool(getattr(prog, "public_facing", True)),
+        "not_stackable_program_ids": list(getattr(prog, "not_stackable_program_ids", None) or []),
         "phase": phase,
         "effective_date": prog.effective_date,
         "expiration_date": prog.expiration_date,
@@ -143,6 +144,7 @@ def create_program(
         per_unit_amount=Decimal(str(req.per_unit_amount)) if req.per_unit_amount else Decimal("0"),
         stacking_category=req.stacking_category or req.program_type,
         public_facing=req.public_facing if req.public_facing is not None else True,
+        not_stackable_program_ids=req.not_stackable_program_ids or [],
         created_by=user.id,
     )
     db.add(prog)

@@ -32,6 +32,14 @@ class Program(Base):
     # program can be internal AND on the public lookup, or private
     # and staged.
     public_facing = Column(Boolean, nullable=False, default=True, server_default="true")
+    # Per-program stacking exclusion list — IDs of OTHER programs
+    # this one cannot be combined with on the same campaign code.
+    # NULL or [] = no per-program exclusions (program-type-level
+    # stacking matrix still applies). Symmetric in practice: if
+    # A.not_stackable lists B's id, the matrix builder drops one of
+    # the pair (lower-amount loses) regardless of whether B
+    # reciprocates, so admins only have to set the rule once.
+    not_stackable_program_ids = Column(JSON, nullable=True)
     effective_date = Column(Date, nullable=False)
     expiration_date = Column(Date, nullable=False)
     budget_amount = Column(Numeric(14, 2), nullable=True)

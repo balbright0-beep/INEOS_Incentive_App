@@ -753,13 +753,25 @@
       // fetch returns (or if it fails) so the wizard never shows empty
       // option groups.
       const [products, setProducts] = React.useState(null);
+      // All programs — used by the Stacking step's "Not Stackable With"
+      // selector so admins can pick OTHER programs by name (and we
+      // persist the actual ids, not loose strings). Filtered to exclude
+      // self when rendering.
+      const [allPrograms, setAllPrograms] = React.useState([]);
       React.useEffect(() => {
         let cancelled = false;
         API.get('/settings/products')
           .then(rows => { if (!cancelled) setProducts(rows || []); })
           .catch(() => { if (!cancelled) setProducts([]); });
+        API.get('/programs')
+          .then(rows => { if (!cancelled) setAllPrograms(rows || []); })
+          .catch(() => { if (!cancelled) setAllPrograms([]); });
         return () => { cancelled = true; };
       }, []);
+
+      const [notStackableIds, setNotStackableIds] = React.useState(() => {
+        return isEdit ? (editProgram.not_stackable_program_ids || []) : [];
+      });
 
       const update = (key, val) => setForm(f => ({ ...f, [key]: val }));
 
@@ -830,6 +842,7 @@
             budget_amount: form.budget_amount ? parseFloat(form.budget_amount) : null,
             per_unit_amount: form.per_unit_amount ? parseFloat(form.per_unit_amount) : 0,
             public_facing: form.public_facing !== false,
+            not_stackable_program_ids: notStackableIds,
             rules: buildRules(),
           };
           if (isEdit) {
@@ -1049,12 +1062,44 @@
           {step === 3 && (
             <div className="space-y-5">
               <div className="p-3 bg-mushroom-light rounded border border-dove text-sm text-iron-smoke">
-                Stacking rules have been pre-populated based on the <strong>{form.program_type.replace('_',' ')}</strong> program type.
-                Adjust if this program has special stacking requirements.
+                Pick any other programs that <strong>cannot</strong> be combined with this one on the same campaign code.
+                The matrix builder will drop the lower-amount program from any code where two incompatible programs would otherwise stack.
               </div>
 
-              <CheckboxGroup label="Stackable With" options={stackableOptions} selected={form.stackable_with} onChange={v => update('stackable_with', v)} columns={2} />
-              <CheckboxGroup label="Not Stackable With" options={notStackableOptions} selected={form.not_stackable_with} onChange={v => update('not_stackable_with', v)} columns={2} />
+              {(() => {
+                // Filter to OTHER programs (not this one) and present
+                // them as a checkbox grid. Persists program ids, not
+                // names — so renames don't break the link.
+                const others = (allPrograms || []).filter(p => !isEdit || p.id !== editProgram.id);
+                if (others.length === 0) {
+                  return <div className="text-sm text-silver-dust italic">No other programs to exclude. Once you create more programs, they'll show up here.</div>;
+                }
+                return (
+                  <div>
+                    <label className="block text-sm font-medium text-onyx mb-2">Not Stackable With <span className="text-silver-dust font-normal">({notStackableIds.length} selected)</span></label>
+                    <div className="grid grid-cols-2 gap-2 max-h-72 overflow-y-auto border border-dove rounded p-2 bg-white">
+                      {others.map(p => {
+                        const checked = notStackableIds.includes(p.id);
+                        return (
+                          <label key={p.id} className={`flex items-start gap-2 p-2 rounded cursor-pointer transition-colors ${checked ? 'bg-flare-red/5 border border-flare-red/30' : 'hover:bg-dove/30 border border-transparent'}`}>
+                            <input type="checkbox" checked={checked}
+                              onChange={() => {
+                                setNotStackableIds(checked
+                                  ? notStackableIds.filter(x => x !== p.id)
+                                  : [...notStackableIds, p.id]);
+                              }}
+                              className="mt-0.5 accent-flare-red" />
+                            <div className="text-sm">
+                              <div className="font-medium text-onyx">{p.name}</div>
+                              <div className="text-xs text-silver-dust">{p.program_type.replace('_',' ')} \u00b7 {p.phase || p.status}</div>
+                            </div>
+                          </label>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
 
               <div className="flex justify-between">
                 <Button variant="outline" onClick={() => setStep(2)}>Back</Button>
@@ -1082,8 +1127,11 @@
                 </div>
                 <div className="pt-2 mt-2 border-t border-dove text-sm">
                   <p><span className="text-silver-dust">Eligible:</span> {summaryText}</p>
-                  <p className="mt-1"><span className="text-silver-dust">Stackable:</span> {form.stackable_with.length > 0 ? form.stackable_with.map(s => s.replace('_',' ')).join(', ') : 'None specified'}</p>
-                  <p className="mt-1"><span className="text-silver-dust">Not Stackable:</span> {form.not_stackable_with.length > 0 ? form.not_stackable_with.map(s => s.replace('_',' ')).join(', ') : 'None specified'}</p>
+                  <p className="mt-1"><span className="text-silver-dust">Not Stackable With:</span> {(() => {
+                    if (notStackableIds.length === 0) return 'No exclusions';
+                    const byId = Object.fromEntries((allPrograms || []).map(p => [p.id, p.name]));
+                    return notStackableIds.map(id => byId[id] || id.slice(0, 8)).join(', ');
+                  })()}</p>
                 </div>
               </div>
 

@@ -245,6 +245,38 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
                 "amount": float(prog.per_unit_amount or 0),
             })
 
+        # Per-program stacking enforcement. The wizard's "Not Stackable
+        # With" control writes program ids onto Program.not_stackable_
+        # program_ids; this check honors them by dropping the lower-
+        # amount layer of any incompatible pair. Symmetric: a single
+        # admin marking A.not_stackable=[B] is enough — they don't
+        # have to also flip B.not_stackable=[A].
+        if matching_layers:
+            prog_by_id = {p.id: p for p in active_programs}
+            keep = list(range(len(matching_layers)))
+            removed = set()
+            for i in range(len(matching_layers)):
+                if i in removed:
+                    continue
+                a_layer = matching_layers[i]
+                a_prog = prog_by_id.get(a_layer["program_id"])
+                a_excl = set(getattr(a_prog, "not_stackable_program_ids", None) or [])
+                for j in range(i + 1, len(matching_layers)):
+                    if j in removed:
+                        continue
+                    b_layer = matching_layers[j]
+                    b_prog = prog_by_id.get(b_layer["program_id"])
+                    b_excl = set(getattr(b_prog, "not_stackable_program_ids", None) or [])
+                    if b_layer["program_id"] in a_excl or a_layer["program_id"] in b_excl:
+                        # Drop the lower-amount layer; on a tie keep
+                        # the one declared first (deterministic).
+                        loser = j if a_layer["amount"] >= b_layer["amount"] else i
+                        removed.add(loser)
+                        if loser == i:
+                            break  # i is gone; stop pairing it
+            if removed:
+                matching_layers = [l for k, l in enumerate(matching_layers) if k not in removed]
+
         total_amount = sum(l["amount"] for l in matching_layers)
 
         # Skip $0 configs unless they serve tracking purposes

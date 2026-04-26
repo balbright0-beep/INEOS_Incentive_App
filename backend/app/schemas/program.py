@@ -30,6 +30,7 @@ class ProgramCreate(BaseModel):
     per_unit_amount: Optional[float] = 0
     stacking_category: Optional[str] = None
     public_facing: Optional[bool] = True
+    not_stackable_program_ids: Optional[list[str]] = None
     rules: list[ProgramRuleCreate] = []
 
 
@@ -44,6 +45,7 @@ class ProgramUpdate(BaseModel):
     per_unit_amount: Optional[float] = None
     stacking_category: Optional[str] = None
     public_facing: Optional[bool] = None
+    not_stackable_program_ids: Optional[list[str]] = None
     status: Optional[str] = None
     rules: Optional[list[ProgramRuleCreate]] = None
 

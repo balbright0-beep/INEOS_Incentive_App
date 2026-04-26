@@ -34,6 +34,28 @@ def _ensure_rule_type_state_value() -> None:
         conn.execute(text("ALTER TYPE rule_type ADD VALUE IF NOT EXISTS 'state'"))
 
 
+def _ensure_program_not_stackable_column() -> None:
+    """
+    Idempotent ALTER for the per-program stacking exclusion list.
+    Stored as JSON so we don't need a separate join table for what
+    is conceptually a small per-program array of program ids.
+    """
+    insp = inspect(engine)
+    if "programs" not in insp.get_table_names():
+        return
+    cols = {c["name"] for c in insp.get_columns("programs")}
+    if "not_stackable_program_ids" in cols:
+        return
+    is_sqlite = settings.DATABASE_URL.startswith("sqlite")
+    add_sql = (
+        "ALTER TABLE programs ADD COLUMN not_stackable_program_ids JSON"
+        if not is_sqlite
+        else "ALTER TABLE programs ADD COLUMN not_stackable_program_ids TEXT"
+    )
+    with engine.begin() as conn:
+        conn.execute(text(add_sql))
+
+
 def _ensure_program_public_facing_column() -> None:
     """
     Idempotent ALTER for the public_facing flag. Defaults TRUE so
@@ -94,6 +116,7 @@ async def lifespan(app: FastAPI):
     _ensure_rule_type_state_value()
     _ensure_program_published_column()
     _ensure_program_public_facing_column()
+    _ensure_program_not_stackable_column()
     # Seed data
     db = SessionLocal()
     try:
