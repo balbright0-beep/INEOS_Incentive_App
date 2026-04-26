@@ -272,9 +272,19 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
 
         total_amount = sum(l["amount"] for l in matching_layers)
 
-        # Skip $0 configs unless they serve tracking purposes
-        if total_amount == 0 and deal_type not in ("demo", "apr", "lease"):
-            continue
+        # Always emit a base code for cash / apr / lease / demo even
+        # when no programs contribute, so the retailer has a SAP code
+        # to enter for the deal type regardless of incentive coverage.
+        # Skip only:
+        #   • cvp configs with no matching cvp program (the code
+        #     itself only makes sense when a CVP program applies),
+        #   • special-edition configs with no matching program (no
+        #     sensible "default" exists for an Arcane / Iceland code).
+        if total_amount == 0:
+            if deal_type == "cvp":
+                continue
+            if config.get("special_edition"):
+                continue
 
         # Loyalty / conquest gate. The outer loop generates configs for
         # every combination of loyalty and conquest flags, but those
