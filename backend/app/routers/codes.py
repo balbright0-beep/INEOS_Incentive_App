@@ -66,9 +66,11 @@ def list_public_codes(db: Session = Depends(get_db)):
             .filter(CampaignCodeLayer.campaign_code_id == c.id)
             .all()
         )
-        if not layers:
-            continue
-        if not all(getattr(prog, "published", False) for _, prog in layers):
+        # Base codes have no layers — they're the deal-type fallback
+        # (USCSWS, USLSWS, USASWS, etc.). Always public; nothing to
+        # gate on. Codes WITH layers must have all layer programs
+        # published before they appear on the retailer-facing list.
+        if layers and not all(getattr(prog, "published", False) for _, prog in layers):
             continue
         out.append({
             "id": c.id,
@@ -270,10 +272,13 @@ def _build_codes_xlsx(db: Session, published_only: bool = False):
     # Public extract gates on every contributing program being published.
     # Codes with any staged layer are dropped entirely; we don't render a
     # partial breakdown because the totals would be misleading.
+    # Base codes (empty layer list) are always included — they have no
+    # programs to gate on and represent the deal-type fallback.
     if published_only:
         codes = [
             c for c in codes
-            if code_layers.get(c.id) and all(getattr(prog, "published", False) for _, prog in code_layers[c.id])
+            if not code_layers.get(c.id)
+            or all(getattr(prog, "published", False) for _, prog in code_layers[c.id])
         ]
 
     # Get date range from active programs
