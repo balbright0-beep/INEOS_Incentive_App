@@ -1,7 +1,10 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
-from app.schemas.lookup import LookupRequest, LookupResponse
+from app.schemas.lookup import (
+    LookupRequest, LookupResponse,
+    PreviewRequest, PreviewResponse, DealTypePreview,
+)
 from app.services.lookup import lookup_incentive
 from app.services.geo import zip_to_state, state_name, ALL_STATES, STATE_NAMES
 from app.auth.security import get_current_user
@@ -61,6 +64,60 @@ def public_incentive_lookup(req: LookupRequest, db: Session = Depends(get_db)):
             detail="No active incentive program for this configuration. Contact your INEOS retailer."
         )
     return result
+
+
+def _preview(db: Session, req: PreviewRequest, public_only: bool) -> PreviewResponse:
+    """Run the lookup once per deal type and roll up to the wizard's step-2
+    summary. A 'no code' result becomes available=False so the card can grey
+    out instead of disappearing."""
+    if req.zip_code and not req.state:
+        resolved = zip_to_state(req.zip_code)
+        if resolved:
+            req.state = resolved
+
+    out: dict[str, DealTypePreview] = {}
+    for dt in ("cash", "apr", "lease"):
+        lr = LookupRequest(
+            vin=req.vin,
+            model_year=req.model_year,
+            body_style=req.body_style,
+            trim=req.trim,
+            special_edition=req.special_edition,
+            msrp=req.msrp,
+            finance_type=dt,
+            state=req.state,
+            zip_code=req.zip_code,
+            conquest=False,
+            loyalty=False,
+        )
+        result = lookup_incentive(db, lr, public_only=public_only)
+        if result is None:
+            out[dt] = DealTypePreview(deal_type=dt, total=0.0, program_count=0, available=False)
+        else:
+            out[dt] = DealTypePreview(
+                deal_type=dt,
+                total=result.total_support_amount,
+                program_count=len(result.eligible_programs),
+                available=True,
+            )
+    return PreviewResponse(cash=out["cash"], apr=out["apr"], lease=out["lease"])
+
+
+@router.post("/preview", response_model=PreviewResponse)
+def preview_deal_types(
+    req: PreviewRequest,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Authenticated wizard step-2 summary. Includes staged programs."""
+    return _preview(db, req, public_only=False)
+
+
+@router.post("/preview/public", response_model=PreviewResponse)
+def public_preview_deal_types(req: PreviewRequest, db: Session = Depends(get_db)):
+    """Public wizard step-2 summary. Filters to published programs only,
+    matching the production gate on /api/lookup/public."""
+    return _preview(db, req, public_only=True)
 
 
 @router.get("/vin/{vin}")

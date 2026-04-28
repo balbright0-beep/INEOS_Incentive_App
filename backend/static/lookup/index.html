@@ -304,6 +304,131 @@
       color: #9F9F9F;
       font-size: 13px;
     }
+
+    /* ─── Wizard stepper ─── */
+    .stepper {
+      display: flex;
+      gap: 0;
+      margin-bottom: 24px;
+      background: #fff;
+      border: 1px solid #E9E8E5;
+      border-radius: 6px;
+      overflow: hidden;
+    }
+    .step-item {
+      flex: 1;
+      padding: 14px 18px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #9F9F9F;
+      border-right: 1px solid #E9E8E5;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      position: relative;
+      background: #FAFAF9;
+    }
+    .step-item:last-child { border-right: none; }
+    .step-item .num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: #E9E8E5;
+      color: #606060;
+      font-weight: 700;
+      font-size: 11px;
+    }
+    .step-item.done {
+      background: #fff;
+      color: #2C931E;
+      cursor: pointer;
+    }
+    .step-item.done .num { background: #2C931E; color: #fff; }
+    .step-item.active {
+      background: #fff;
+      color: #1D1D1D;
+    }
+    .step-item.active .num { background: #FF4639; color: #fff; }
+    .step-item.done:hover { background: #FAFAF9; }
+
+    .step-panel { display: none; }
+    .step-panel.active { display: block; animation: fadeIn 0.2s ease-out; }
+
+    /* Deal type cards */
+    .deal-card {
+      flex: 1;
+      padding: 24px;
+      border: 2px solid #E9E8E5;
+      border-radius: 6px;
+      background: #fff;
+      cursor: pointer;
+      transition: border-color 0.15s, box-shadow 0.15s, transform 0.15s;
+      text-align: left;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .deal-card:hover:not(.disabled) {
+      border-color: #FF4639;
+      box-shadow: 0 6px 20px rgba(255,70,57,0.08);
+      transform: translateY(-2px);
+    }
+    .deal-card.disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      background: #FAFAF9;
+    }
+    .deal-card .label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: #606060;
+    }
+    .deal-card .name {
+      font-family: 'Formula4x4', 'Arial Black', sans-serif;
+      font-size: 22px;
+      letter-spacing: 0.02em;
+      text-transform: uppercase;
+      color: #1D1D1D;
+    }
+    .deal-card .total {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 28px;
+      font-weight: 700;
+      color: #2C931E;
+    }
+    .deal-card .meta {
+      font-size: 12px;
+      color: #606060;
+    }
+    .deal-card.disabled .total { color: #9F9F9F; }
+
+    /* Wizard buttons */
+    .btn-secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 12px 18px;
+      background: #fff;
+      color: #1D1D1D;
+      border: 1px solid #E9E8E5;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .btn-secondary:hover { background: #FAFAF9; border-color: #1D1D1D; }
   </style>
 </head>
 <body>
@@ -343,20 +468,26 @@
     <div style="margin-bottom:24px">
       <h1 style="font-size:28px;color:#1D1D1D;margin:0">Find Your Incentive</h1>
       <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:680px">
-        Enter a VIN to auto-populate vehicle details, or select model and trim manually. Add your ZIP code so state-specific programs filter correctly.
-        Results show the active campaign code and a layer-by-layer breakdown of every contributing program.
+        Step through your vehicle, deal type, and program selection. We'll show the campaign code and an estimated payment at the end.
       </p>
     </div>
 
-    <div class="layout" style="display:flex;gap:24px;align-items:flex-start">
-      <!-- LEFT: form -->
-      <div style="width:400px;flex-shrink:0">
-        <form id="lookup-form" class="card" style="padding:22px">
+    <!-- Stepper -->
+    <div class="stepper" id="stepper">
+      <div class="step-item active" data-step="1"><span class="num">1</span> Vehicle</div>
+      <div class="step-item" data-step="2"><span class="num">2</span> Deal Type</div>
+      <div class="step-item" data-step="3"><span class="num">3</span> Programs</div>
+      <div class="step-item" data-step="4"><span class="num">4</span> Result</div>
+    </div>
+
+    <!-- Step 1: Vehicle + ZIP -->
+    <div id="step-1" class="step-panel active">
+      <div style="max-width:560px;margin:0 auto">
+        <form id="vehicle-form" class="card" style="padding:24px">
           <h3 class="eyebrow" style="margin:0 0 12px;color:#1D1D1D">Vehicle Information</h3>
           <label class="field-label" for="vin">VIN Lookup</label>
           <input id="vin" name="vin" class="field-input font-mono" maxlength="17" autocomplete="off" placeholder="Enter VIN to auto-populate vehicle details">
           <p id="vin-status" style="font-size:11px;color:#9F9F9F;margin-top:4px;min-height:14px"></p>
-
           <div id="vin-found" class="vin-found fade-in" style="display:none;margin-top:6px"></div>
 
           <div class="or-divider">
@@ -392,29 +523,14 @@
             </select>
           </div>
 
-          <h3 class="eyebrow" style="margin:22px 0 12px;color:#1D1D1D">Deal Information</h3>
-          <label class="field-label" for="finance_type">Finance Type</label>
-          <select id="finance_type" class="field-select">
-            <option value="cash">Cash</option>
-            <option value="apr">APR (Finance)</option>
-            <option value="lease">Lease</option>
-          </select>
-
           <h3 class="eyebrow" style="margin:22px 0 12px;color:#1D1D1D">Customer Location</h3>
-          <div style="display:grid;grid-template-columns:120px 1fr;gap:10px">
-            <div>
-              <label class="field-label" for="zip_code">ZIP Code</label>
-              <input id="zip_code" class="field-input" inputmode="numeric" maxlength="10" placeholder="e.g. 92101">
-            </div>
-            <div>
-              <label class="field-label" for="state">State</label>
-              <select id="state" class="field-select"></select>
-            </div>
-          </div>
+          <label class="field-label" for="zip_code">ZIP Code</label>
+          <input id="zip_code" class="field-input" inputmode="numeric" maxlength="10" placeholder="e.g. 92101" style="max-width:200px">
           <p id="zip-status" style="font-size:11px;color:#2C931E;margin-top:4px;min-height:14px"></p>
+          <input type="hidden" id="state">
 
-          <button type="submit" class="btn-primary" id="submit-btn" style="width:100%;margin-top:18px">
-            <span id="submit-label">Find Incentive Code</span>
+          <button type="submit" class="btn-primary" id="step1-next-btn" style="width:100%;margin-top:20px">
+            <span id="step1-next-label">Continue →</span>
           </button>
         </form>
 
@@ -423,16 +539,44 @@
           Confirm final pricing with your INEOS retailer.
         </p>
       </div>
+    </div>
 
-      <!-- RIGHT: results -->
-      <div style="flex:1;min-width:0">
-        <div id="results"></div>
-        <div id="empty-state" class="card empty-state">
-          <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#9F9F9F" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
-          <h2 style="font-size:18px;color:#606060;margin:0 0 6px">Enter a VIN or vehicle details</h2>
-          <p style="font-size:13px;color:#9F9F9F;margin:0;max-width:340px;margin:0 auto">
-            Your campaign code, total support amount, and layer-by-layer breakdown will appear here.
-          </p>
+    <!-- Step 2: Deal Type -->
+    <div id="step-2" class="step-panel">
+      <div style="max-width:880px;margin:0 auto">
+        <div style="margin-bottom:18px;text-align:center">
+          <h2 style="font-size:22px;color:#1D1D1D;margin:0">Choose How You'd Like to Pay</h2>
+          <p style="font-size:13px;color:#606060;margin:6px 0 0">Each option shows the total support available for your vehicle and ZIP.</p>
+        </div>
+        <div id="deal-cards" style="display:flex;gap:16px;flex-wrap:wrap"></div>
+        <div style="display:flex;justify-content:center;margin-top:24px">
+          <button type="button" class="btn-secondary" onclick="goToStep(1)">← Back</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 3: Programs -->
+    <div id="step-3" class="step-panel">
+      <div style="max-width:760px;margin:0 auto">
+        <div style="margin-bottom:18px;text-align:center">
+          <h2 style="font-size:22px;color:#1D1D1D;margin:0">Choose Your Programs</h2>
+          <p style="font-size:13px;color:#606060;margin:6px 0 0">Default selection auto-stacks everything compatible. Toggle any program to include or skip it.</p>
+        </div>
+        <div id="step3-content"></div>
+        <div style="display:flex;justify-content:space-between;gap:10px;margin-top:24px">
+          <button type="button" class="btn-secondary" onclick="goToStep(2)">← Back</button>
+          <button type="button" class="btn-primary" onclick="goToStep(4)">Continue to Result →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step 4: Result + Calculator -->
+    <div id="step-4" class="step-panel">
+      <div style="max-width:880px;margin:0 auto">
+        <div id="step4-content"></div>
+        <div style="display:flex;justify-content:space-between;gap:10px;margin-top:24px">
+          <button type="button" class="btn-secondary" onclick="goToStep(3)">← Back to Programs</button>
+          <button type="button" class="btn-secondary" onclick="resetWizard()">Start Over</button>
         </div>
       </div>
     </div>
@@ -620,79 +764,189 @@
       }, 200);
     });
 
-    // ───────────── Submit ─────────────
-    $('lookup-form').addEventListener('submit', async (e) => {
-      e.preventDefault();
-      const btn = $('submit-btn');
-      const lbl = $('submit-label');
-      btn.disabled = true;
-      lbl.textContent = 'Looking up…';
-      $('results').innerHTML = '';
-      $('empty-state').style.display = 'none';
+    // ───────────── Wizard state ─────────────
+    const PREVIEW_ENDPOINT = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/lookup/preview' : '/api/lookup/preview/public';
+    const _wizard = {
+      step: 1,
+      vehicle: null,    // { vin, model_year, body_style, trim, zip_code, state, msrp }
+      preview: null,    // PreviewResponse
+      dealType: null,   // 'cash' | 'apr' | 'lease'
+      lookup: null,     // LookupResponse
+    };
 
-      const body = {
+    function goToStep(n) {
+      _wizard.step = n;
+      for (let i = 1; i <= 4; i++) {
+        const panel = $('step-' + i);
+        if (panel) panel.classList.toggle('active', i === n);
+        const item = document.querySelector(`.step-item[data-step="${i}"]`);
+        if (item) {
+          item.classList.toggle('active', i === n);
+          item.classList.toggle('done', i < n);
+        }
+      }
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+    window.goToStep = goToStep;
+
+    // Allow clicking already-completed steps to jump back.
+    document.querySelectorAll('.step-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const target = parseInt(el.dataset.step, 10);
+        if (target < _wizard.step) goToStep(target);
+      });
+    });
+
+    function resetWizard() {
+      _wizard.vehicle = null;
+      _wizard.preview = null;
+      _wizard.dealType = null;
+      _wizard.lookup = null;
+      _selectedProgramIds = new Set();
+      $('vin').value = '';
+      $('zip_code').value = '';
+      $('vin-found').style.display = 'none';
+      $('vin-status').textContent = '';
+      $('zip-status').textContent = '';
+      vinActive = false;
+      goToStep(1);
+    }
+    window.resetWizard = resetWizard;
+
+    // ───────────── Step 1 → Step 2 ─────────────
+    $('vehicle-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const btn = $('step1-next-btn');
+      const lbl = $('step1-next-label');
+      const zip = $('zip_code').value.trim();
+      if (!zip || zip.length < 5) {
+        toast('Enter a 5-digit ZIP code so we can apply state-specific programs.', 'warn');
+        return;
+      }
+      btn.disabled = true;
+      lbl.textContent = 'Loading…';
+      _wizard.vehicle = {
         vin: $('vin').value || null,
         model_year: $('model_year').value,
         body_style: $('body_style').value,
         trim: $('trim').value || null,
-        finance_type: $('finance_type').value,
-        zip_code: $('zip_code').value || null,
+        zip_code: zip,
         state: $('state').value || null,
+      };
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (PREVIEW_MODE && ADMIN_TOKEN) headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
+        const r = await fetch(PREVIEW_ENDPOINT, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify(_wizard.vehicle),
+        });
+        if (!r.ok) throw new Error('Preview failed (' + r.status + ')');
+        _wizard.preview = await r.json();
+        renderDealCards(_wizard.preview);
+        goToStep(2);
+      } catch (err) {
+        toast(err.message || 'Could not load deal types', 'error');
+      } finally {
+        btn.disabled = false;
+        lbl.textContent = 'Continue →';
+      }
+    });
+
+    function renderDealCards(preview) {
+      const cards = [
+        { id: 'cash',  name: 'Cash',  sub: 'Pay in full' },
+        { id: 'apr',   name: 'APR',   sub: 'Finance with Santander' },
+        { id: 'lease', name: 'Lease', sub: 'Lease with Santander' },
+      ];
+      $('deal-cards').innerHTML = cards.map(c => {
+        const p = preview[c.id] || { available: false, total: 0, program_count: 0 };
+        const disabled = !p.available;
+        const onclick = disabled ? '' : `onclick="selectDealType('${c.id}')"`;
+        const totalLine = p.available
+          ? `<div class="total">${fmtMoney(p.total)}</div>
+             <div class="meta">${p.program_count} program${p.program_count === 1 ? '' : 's'} available</div>`
+          : `<div class="total">—</div>
+             <div class="meta">No active programs for this configuration</div>`;
+        return `
+          <button type="button" class="deal-card${disabled ? ' disabled' : ''}" ${onclick} ${disabled ? 'disabled' : ''}>
+            <div class="label">${c.sub}</div>
+            <div class="name">${c.name}</div>
+            ${totalLine}
+          </button>`;
+      }).join('');
+    }
+
+    // ───────────── Step 2 → Step 3 ─────────────
+    async function selectDealType(dealType) {
+      _wizard.dealType = dealType;
+      $('step3-content').innerHTML = '<div class="panel-loading">Loading programs…</div>';
+      goToStep(3);
+
+      const body = {
+        ...(_wizard.vehicle || {}),
+        finance_type: dealType,
         conquest: false,
         conquest_brand: null,
         loyalty: false,
         loyalty_vin: null,
       };
-
       try {
         const headers = { 'Content-Type': 'application/json' };
-        if (LOOKUP_ENDPOINT === '/api/lookup' && ADMIN_TOKEN) {
-          headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
-        }
+        if (LOOKUP_ENDPOINT === '/api/lookup' && ADMIN_TOKEN) headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
         const r = await fetch(LOOKUP_ENDPOINT, {
           method: 'POST',
           headers,
           body: JSON.stringify(body),
         });
         if (r.status === 404) {
-          const j = await r.json().catch(() => ({}));
-          $('empty-state').style.display = 'block';
-          $('empty-state').innerHTML = `
-            <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="#CC0200" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
-            <h2 style="font-size:18px;color:#CC0200;margin:0 0 6px">No Active Program</h2>
-            <p style="font-size:13px;color:#606060;margin:0;max-width:380px;margin-left:auto;margin-right:auto">${escapeHtml(j.detail || 'No active incentive program for this configuration.')}</p>`;
+          $('step3-content').innerHTML = `
+            <div class="card empty-state">
+              <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#CC0200" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg>
+              <h2 style="font-size:16px;color:#CC0200;margin:0 0 6px">No Active Program</h2>
+              <p style="font-size:13px;color:#606060;margin:0;max-width:380px;margin-left:auto;margin-right:auto">No active incentive program for this configuration.</p>
+            </div>`;
           return;
         }
         if (!r.ok) throw new Error('Lookup failed (' + r.status + ')');
-        const result = await r.json();
-        renderResult(result);
+        _wizard.lookup = await r.json();
+        _selectedProgramIds = new Set(
+          (_wizard.lookup.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id)
+        );
+        _renderSelection();
       } catch (err) {
         toast(err.message || 'Lookup failed', 'error');
-        $('empty-state').style.display = 'block';
-      } finally {
-        btn.disabled = false;
-        lbl.textContent = 'Find Incentive Code';
+        $('step3-content').innerHTML = `<div class="card empty-state" style="color:#CC0200">${escapeHtml(err.message || 'Lookup failed')}</div>`;
       }
-    });
+    }
+    window.selectDealType = selectDealType;
 
-    // Cached on the last lookup so the chooser checkboxes can re-
-    // calculate without another network round-trip. Cleared on a new
-    // form submit.
-    let _lastLookup = null;
     let _selectedProgramIds = new Set();
 
-    function renderResult(r) {
-      _lastLookup = r;
-      // Default selection: everything the matrix already auto-stacked.
-      // Retailer can drop any of them or pull in alternatives below.
-      _selectedProgramIds = new Set(
-        (r.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id)
-      );
-      _renderSelection();
+    function _computeSelection() {
+      const r = _wizard.lookup;
+      if (!r) return null;
+      const eligible = r.eligible_programs || [];
+      let total = 0;
+      const conflictWarnings = [];
+      for (const p of eligible) {
+        if (!_selectedProgramIds.has(p.program_id)) continue;
+        total += p.amount;
+        for (const otherId of (p.conflicts_with || [])) {
+          if (_selectedProgramIds.has(otherId)) {
+            const other = eligible.find(x => x.program_id === otherId);
+            if (other) conflictWarnings.push(`${p.program_name} cannot be combined with ${other.program_name}`);
+          }
+        }
+      }
+      const conflictSet = Array.from(new Set(conflictWarnings));
+      const noEligible = eligible.length === 0;
+      const totalChanged = Math.abs(total - r.total_support_amount) > 0.01;
+      return { eligible, total, conflictSet, noEligible, totalChanged };
     }
 
     function _renderSelection() {
-      const r = _lastLookup;
+      const r = _wizard.lookup;
       if (!r) return;
       const eligible = r.eligible_programs || [];
       // Compute the displayed total from current selection (so toggles
@@ -772,34 +1026,37 @@
           <span style="font-style:italic;color:#9F9F9F">${escapeHtml(x.reason || '')}</span>
         </div>`).join('');
 
-      $('results').innerHTML = `
-        <div class="card fade-in" style="padding:32px;text-align:center;border:2px solid rgba(255,70,57,0.2);margin-bottom:16px">
-          <p class="eyebrow" style="margin:0 0 8px">Campaign Code</p>
-          ${codeBlock}
-          <div style="margin-top:12px;font-size:11px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">
-            ${escapeHtml(r.model_year)} \u00b7 ${escapeHtml((r.body_style || '').replace('_',' ').toUpperCase())} \u00b7 ${escapeHtml((r.deal_type || '').toUpperCase())}${r.loyalty ? ' \u00b7 LOYALTY' : ''}${r.conquest ? ' \u00b7 CONQUEST' : ''}
+      // Running total banner (shown above the chooser in step 3)
+      const totalBanner = `
+        <div class="card" style="padding:18px 22px;margin-bottom:16px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+          <div>
+            <div class="eyebrow" style="margin-bottom:4px">Running Total</div>
+            <div style="font-size:11.5px;color:#606060">${escapeHtml(r.model_year)} \u00b7 ${escapeHtml((r.body_style || '').replace('_',' ').toUpperCase())} \u00b7 ${escapeHtml((r.deal_type || '').toUpperCase())}</div>
           </div>
-        </div>
+          <div style="font-family:'JetBrains Mono',monospace;font-size:32px;font-weight:700;color:${totalColor}">${fmtMoney(total)}</div>
+        </div>`;
 
+      $('step3-content').innerHTML = `
+        ${totalBanner}
         ${conflictBanner}
-
-        ${noEligible ? '' : `
-        <div class="card fade-in" style="padding:20px;margin-bottom:16px">
-          <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:12px;flex-wrap:wrap">
-            <div>
-              <h3 class="eyebrow" style="margin:0;color:#1D1D1D">Choose Programs to Apply</h3>
-              <p style="font-size:11.5px;color:#606060;margin:4px 0 0">Default selection auto-stacks everything compatible. Toggle any program to include or skip it.</p>
-            </div>
-            <div style="display:flex;gap:6px">
-              <button type="button" onclick="_chooserSelectAuto()" style="background:#fff;border:1px solid #E9E8E5;color:#1D1D1D;padding:6px 10px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;cursor:pointer">Reset to Default</button>
-              <button type="button" onclick="_chooserClearAll()" style="background:#fff;border:1px solid #E9E8E5;color:#7F1D1D;padding:6px 10px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;cursor:pointer">Clear All</button>
-            </div>
-          </div>
-          <div style="display:grid;gap:8px">
-            ${chooserRows}
-          </div>
-        </div>`}
-
+        ${noEligible
+          ? `<div class="card empty-state"><h2 style="font-size:16px;color:#606060;margin:0 0 6px">No additional programs</h2><p style="font-size:13px;color:#9F9F9F;margin:0">Continue to see the base campaign code for this deal type.</p></div>`
+          : `<div class="card" style="padding:20px;margin-bottom:16px">
+              <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+                <div>
+                  <h3 class="eyebrow" style="margin:0;color:#1D1D1D">Available Programs</h3>
+                  <p style="font-size:11.5px;color:#606060;margin:4px 0 0">Default selection auto-stacks everything compatible. Toggle any program to include or skip it.</p>
+                </div>
+                <div style="display:flex;gap:6px">
+                  <button type="button" onclick="_chooserSelectAuto()" style="background:#fff;border:1px solid #E9E8E5;color:#1D1D1D;padding:6px 10px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;cursor:pointer">Reset to Default</button>
+                  <button type="button" onclick="_chooserClearAll()" style="background:#fff;border:1px solid #E9E8E5;color:#7F1D1D;padding:6px 10px;border-radius:4px;font-size:11px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em;cursor:pointer">Clear All</button>
+                </div>
+              </div>
+              <div style="display:grid;gap:8px">
+                ${chooserRows}
+              </div>
+            </div>`
+        }
         ${na ? `
         <div class="card fade-in" style="padding:24px">
           <h3 class="eyebrow" style="margin:0 0 12px;color:#606060">Not Applicable to This Deal</h3>
@@ -813,7 +1070,7 @@
       _renderSelection();
     };
     window._chooserSelectAuto = function () {
-      const r = _lastLookup;
+      const r = _wizard.lookup;
       if (!r) return;
       _selectedProgramIds = new Set((r.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id));
       _renderSelection();
@@ -821,6 +1078,294 @@
     window._chooserClearAll = function () {
       _selectedProgramIds = new Set();
       _renderSelection();
+    };
+
+    // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Step 4: Result + Payment Calculator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+    const _calc = {
+      msrp: 0, discount: 0, down: 0, trade: 0, dealer_fee: 999,
+      apr: 7.99, term_finance: 60,
+      money_factor: 0.00250, residual_pct: 55, term_lease: 36, acq_fee: 895,
+      mileage: '10000',
+      rates: { apr: [], lease: [], mileage_degradation: {} },
+      _loadedFor: null,
+    };
+
+    async function _loadRates() {
+      const v = _wizard.vehicle;
+      if (!v) return;
+      const trim = v.trim ? `&trim=${encodeURIComponent(v.trim)}` : '';
+      try {
+        const r = await fetch(`/api/lookup/rates?model_year=${encodeURIComponent(v.model_year)}&body_style=${encodeURIComponent(v.body_style)}&tier=1${trim}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        _calc.rates = data;
+        if (data.apr?.length) {
+          const best = data.apr.find(x => x.term === 60) || data.apr[0];
+          if (best.apr != null) _calc.apr = Number(best.apr);
+          if (best.term != null) _calc.term_finance = Number(best.term);
+        }
+        if (data.lease?.length) {
+          const best = data.lease.find(x => x.term === 36 && x.money_factor != null)
+            || data.lease.find(x => x.money_factor != null)
+            || data.lease[0];
+          if (best) {
+            if (best.money_factor != null) _calc.money_factor = Number(best.money_factor);
+            if (best.residual_pct != null) _calc.residual_pct = Number(best.residual_pct);
+            if (best.term != null) _calc.term_lease = Number(best.term);
+            if (best.acq_fee != null) _calc.acq_fee = Number(best.acq_fee);
+          }
+        }
+      } catch {}
+    }
+
+    async function _loadMsrp() {
+      const v = _wizard.vehicle;
+      if (!v) return;
+      const trim = v.trim ? `&trim=${encodeURIComponent(v.trim)}` : '';
+      try {
+        const r = await fetch(`/api/lookup/msrp?model_year=${encodeURIComponent(v.model_year)}&body_style=${encodeURIComponent(v.body_style)}${trim}`);
+        if (!r.ok) return;
+        const data = await r.json();
+        if (data.msrp) _calc.msrp = Number(data.msrp);
+      } catch {}
+    }
+
+    async function _renderStep4() {
+      const r = _wizard.lookup;
+      if (!r) {
+        $('step4-content').innerHTML = '<div class="card empty-state">Complete the prior steps first.</div>';
+        return;
+      }
+      $('step4-content').innerHTML = '<div class="panel-loading">Loading payment estimate\u2026</div>';
+      const cacheKey = (_wizard.dealType || '') + '|' + (_wizard.vehicle?.trim || '');
+      if (_calc._loadedFor !== cacheKey) {
+        await Promise.all([_loadRates(), _loadMsrp()]);
+        _calc._loadedFor = cacheKey;
+      }
+      _drawStep4();
+    }
+
+    function _drawStep4() {
+      const r = _wizard.lookup;
+      if (!r) return;
+      const sel = _computeSelection();
+      const { eligible, total, conflictSet, noEligible, totalChanged } = sel;
+
+      const showNoIncentiveChip = total === 0 && !noEligible;
+      const codeBlock = showNoIncentiveChip
+        ? `<div style="display:inline-block;background:#9F9F9F;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
+             <span style="font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.08em;font-weight:600">NO INCENTIVE</span>
+           </div>
+           <p style="font-size:12.5px;color:#606060;margin-top:6px">Customer doesn't qualify for available programs.</p>`
+        : `<p class="eyebrow" style="margin:0 0 8px">Campaign Code to Enter in SAP</p>
+           <div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
+             <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
+           </div>
+           <p style="font-size:32px;font-weight:700;color:${total === 0 ? '#9F9F9F' : '#2C931E'};margin:0">${fmtMoney(total)}</p>
+           <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">${noEligible ? 'Base code for this deal type \u2014 no incentive programs apply' : totalChanged ? `Adjusted from default ${fmtMoney(r.total_support_amount)} based on selection` : 'Total Support Amount'}${r.label ? ' \u00b7 ' + escapeHtml(r.label) : ''}</p>`;
+
+      const conflictBanner = conflictSet.length
+        ? `<div style="margin-bottom:12px;padding:10px 14px;background:#FEF2F2;border-left:3px solid #C4281D;border-radius:0 4px 4px 0;font-size:12.5px;color:#7F1D1D">
+             <b>Selection conflict:</b> ${conflictSet.map(s => escapeHtml(s)).join(' \u00b7 ')}
+           </div>`
+        : '';
+
+      const selectedRows = eligible.filter(p => _selectedProgramIds.has(p.program_id)).map(p => `
+        <div class="layer-row">
+          <span>${escapeHtml(p.program_name)} <span class="pill-tag" style="margin-left:6px">${escapeHtml((p.program_type || '').replace('_', ' '))}</span></span>
+          <span class="mono" style="color:#2C931E;font-weight:600">${fmtMoney(p.amount)}</span>
+        </div>`).join('');
+      const breakdown = selectedRows ? `
+        <div class="card" style="padding:20px;margin-bottom:16px">
+          <h3 class="eyebrow" style="margin:0 0 10px;color:#1D1D1D">Selected Programs</h3>
+          ${selectedRows}
+          <div class="total-row"><span>Total Support</span><span class="mono">${fmtMoney(total)}</span></div>
+        </div>` : '';
+
+      const calc = _computePayment(total);
+      const calcCard = _calculatorCard(_wizard.dealType, calc, total);
+
+      $('step4-content').innerHTML = `
+        <div class="card fade-in" style="padding:32px;text-align:center;border:2px solid rgba(255,70,57,0.2);margin-bottom:16px">
+          ${codeBlock}
+          <div style="margin-top:12px;font-size:11px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">
+            ${escapeHtml(r.model_year)} \u00b7 ${escapeHtml((r.body_style || '').replace('_',' ').toUpperCase())} \u00b7 ${escapeHtml((r.deal_type || '').toUpperCase())}
+          </div>
+        </div>
+        ${conflictBanner}
+        ${breakdown}
+        ${calcCard}`;
+    }
+
+    function _computePayment(incentive) {
+      const c = _calc;
+      const msrp = Number(c.msrp) || 0;
+      const discount = Number(c.discount) || 0;
+      const down = Number(c.down) || 0;
+      const trade = Number(c.trade) || 0;
+      const fee = Number(c.dealer_fee) || 0;
+      const sellingPrice = msrp - discount;
+      const dt = _wizard.dealType;
+      if (dt === 'apr') {
+        const rate = (Number(c.apr) || 0) / 100 / 12;
+        const term = parseInt(c.term_finance) || 60;
+        const financed = Math.max(sellingPrice - incentive - down - trade + fee, 0);
+        let monthly = 0;
+        if (rate > 0 && term > 0 && financed > 0)
+          monthly = (financed * rate) / (1 - Math.pow(1 + rate, -term));
+        return { kind: 'apr', monthly, financed, sellingPrice, term };
+      }
+      if (dt === 'lease') {
+        const mf = Number(c.money_factor) || 0;
+        const resPct = Number(c.residual_pct) || 0;
+        const term = parseInt(c.term_lease) || 36;
+        const acq = Number(c.acq_fee) || 0;
+        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq, 0);
+        const residual = msrp * resPct / 100;
+        const monthly = Math.max((adjCap - residual) / term + (adjCap + residual) * mf, 0);
+        return { kind: 'lease', monthly, adjCap, residual, sellingPrice, term, resPct, mf };
+      }
+      const net = Math.max(sellingPrice - incentive - down - trade + fee, 0);
+      return { kind: 'cash', net, sellingPrice };
+    }
+
+    function _calculatorCard(dealType, calc, incentive) {
+      const c = _calc;
+      const dealLabel = dealType === 'apr' ? 'Finance (APR)' : dealType === 'lease' ? 'Lease' : 'Cash';
+      const aprTermOpts = c.rates.apr?.length
+        ? c.rates.apr.map(r => ({ value: String(r.term), label: `${r.term}mo @ ${r.apr}%` }))
+        : [60, 72, 84].map(t => ({ value: String(t), label: `${t}mo` }));
+      const leaseTermOpts = c.rates.lease?.length
+        ? c.rates.lease.filter(r => r.residual_pct != null).map(r => {
+            const adj = (c.rates.mileage_degradation || {})[c.mileage] || 0;
+            const adjRes = Math.max((r.residual_pct || 0) + adj, 0);
+            const mfLabel = r.money_factor != null ? ` MF ${r.money_factor}` : ' Std MF';
+            return { value: String(r.term), label: `${r.term}mo | ${adjRes}% res${mfLabel}` };
+          })
+        : [{value:'24',label:'24mo'},{value:'36',label:'36mo'},{value:'39',label:'39mo'}];
+      const mileageOpts = Object.keys(c.rates.mileage_degradation || {"7500":1,"10000":0,"12000":-1,"15000":-2})
+        .sort((a,b) => Number(a) - Number(b))
+        .map(m => {
+          const adj = (c.rates.mileage_degradation || {})[m] || 0;
+          const adjLabel = adj > 0 ? ` (+${adj}pt)` : adj < 0 ? ` (${adj}pt)` : ' (base)';
+          return { value: m, label: `${Number(m).toLocaleString()} mi/yr${adjLabel}` };
+        });
+
+      const opt = (opts, sel) => opts.map(o => `<option value="${escapeHtml(o.value)}"${String(sel) === o.value ? ' selected' : ''}>${escapeHtml(o.label)}</option>`).join('');
+
+      let hero, dealInputs = '', lineItems;
+      if (calc.kind === 'apr') {
+        hero = `<p class="eyebrow" style="margin:0 0 4px">Estimated Monthly Payment</p>
+                <p style="font-size:38px;font-weight:700;color:#1D1D1D;margin:0">${fmtMoney(Math.round(calc.monthly))}<span style="font-size:18px;color:#9F9F9F;font-weight:400">/mo</span></p>
+                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">${calc.term}mo @ ${c.apr}% Santander APR</p>`;
+        dealInputs = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+            <div><label class="field-label">Term & Rate</label><select class="field-select" onchange="_setCalc('term_finance', this.value); _onTermChangeApr()">${opt(aprTermOpts, c.term_finance)}</select></div>
+            <div><label class="field-label">APR % (override)</label><input class="field-input" type="number" step="0.01" value="${c.apr}" oninput="_setCalc('apr', this.value)"></div>
+          </div>`;
+        lineItems = [
+          ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
+          ['Incentive Applied', -incentive], ['Down Payment', -c.down], ['Trade-In', -c.trade],
+          ['Dealer Fee', c.dealer_fee], ['Amount Financed', calc.financed],
+        ];
+      } else if (calc.kind === 'lease') {
+        hero = `<p class="eyebrow" style="margin:0 0 4px">Estimated Monthly Payment</p>
+                <p style="font-size:38px;font-weight:700;color:#1D1D1D;margin:0">${fmtMoney(Math.round(calc.monthly))}<span style="font-size:18px;color:#9F9F9F;font-weight:400">/mo</span></p>
+                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">${calc.term}mo Lease | MF ${c.money_factor} (${(calc.mf * 2400).toFixed(2)}% APR) | ${calc.resPct}% res @ ${Number(c.mileage).toLocaleString()} mi/yr</p>`;
+        dealInputs = `
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
+            <div><label class="field-label">Term & Residual</label><select class="field-select" onchange="_setCalc('term_lease', this.value); _onLeaseTermChange()">${opt(leaseTermOpts, c.term_lease)}</select></div>
+            <div><label class="field-label">Annual Mileage</label><select class="field-select" onchange="_setCalc('mileage', this.value); _onLeaseTermChange()">${opt(mileageOpts, c.mileage)}</select></div>
+          </div>
+          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
+            <div><label class="field-label">Money Factor</label><input class="field-input" type="number" step="0.00001" value="${c.money_factor}" oninput="_setCalc('money_factor', this.value)"></div>
+            <div><label class="field-label">Residual (%)</label><input class="field-input" type="number" value="${c.residual_pct}" oninput="_setCalc('residual_pct', this.value)"></div>
+            <div><label class="field-label">Acq Fee ($)</label><input class="field-input" type="number" value="${c.acq_fee}" oninput="_setCalc('acq_fee', this.value)"></div>
+          </div>`;
+        lineItems = [
+          ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
+          ['Incentive Applied', -incentive], ['Down / Cap Reduction', -c.down], ['Trade-In', -c.trade],
+          ['Acq Fee + Dealer Fee', c.acq_fee + c.dealer_fee], ['Adj. Cap Cost', calc.adjCap],
+          [`Residual (${calc.resPct}%)`, calc.residual],
+        ];
+      } else {
+        hero = `<p class="eyebrow" style="margin:0 0 4px">Net Purchase Price</p>
+                <p style="font-size:38px;font-weight:700;color:#1D1D1D;margin:0">${fmtMoney(calc.net)}</p>
+                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">After discount + incentives</p>`;
+        lineItems = [
+          ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
+          ['Incentive Applied', -incentive], ['Down Payment', -c.down], ['Trade-In', -c.trade],
+          ['Dealer Fee', c.dealer_fee], ['Net Purchase Price', calc.net],
+        ];
+      }
+
+      const lineRows = lineItems.map(([k, val]) => `
+        <div class="layer-row">
+          <span>${escapeHtml(k)}</span>
+          <span class="mono" style="color:${val < 0 ? '#2C931E' : '#1D1D1D'}">${val < 0 ? '-' : ''}${fmtMoney(Math.abs(val))}</span>
+        </div>`).join('');
+
+      const dealCommonInputs = `
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
+          <div><label class="field-label">MSRP</label><input class="field-input" type="number" value="${c.msrp}" oninput="_setCalc('msrp', this.value)"></div>
+          <div><label class="field-label">Dealer Discount</label><input class="field-input" type="number" value="${c.discount}" oninput="_setCalc('discount', this.value)"></div>
+          <div><label class="field-label">Dealer Fee</label><input class="field-input" type="number" value="${c.dealer_fee}" oninput="_setCalc('dealer_fee', this.value)"></div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+          <div><label class="field-label">Down Payment</label><input class="field-input" type="number" value="${c.down}" oninput="_setCalc('down', this.value)"></div>
+          <div><label class="field-label">Trade-In</label><input class="field-input" type="number" value="${c.trade}" oninput="_setCalc('trade', this.value)"></div>
+        </div>`;
+
+      return `
+        <div class="card fade-in" style="overflow:hidden">
+          <div style="background:#1D1D1D;color:#fff;padding:14px 22px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.1em;text-transform:uppercase;font-weight:600">
+            ${escapeHtml(dealLabel)} Payment Estimator
+          </div>
+          <div style="padding:22px">
+            <div style="text-align:center;background:#FAFAF9;border-radius:6px;padding:18px;margin-bottom:18px">${hero}</div>
+            ${dealCommonInputs}
+            ${dealInputs}
+            <div style="border-top:1px solid #E9E8E5;padding-top:12px">
+              ${lineRows}
+            </div>
+            <p style="font-size:10.5px;color:#9F9F9F;margin:14px 0 0;line-height:1.5">
+              Estimate only. Tax, title, and registration not included. Confirm final pricing with your INEOS retailer.
+            </p>
+          </div>
+        </div>`;
+    }
+
+    window._setCalc = function (key, value) {
+      const num = ['msrp','discount','down','trade','dealer_fee','apr','money_factor','residual_pct','acq_fee'].includes(key);
+      _calc[key] = num ? (parseFloat(value) || 0) : value;
+      _drawStep4();
+    };
+
+    window._onTermChangeApr = function () {
+      const term = parseInt(_calc.term_finance);
+      const match = (_calc.rates.apr || []).find(r => r.term === term);
+      if (match && match.apr != null) _calc.apr = Number(match.apr);
+      _drawStep4();
+    };
+
+    window._onLeaseTermChange = function () {
+      const term = parseInt(_calc.term_lease);
+      const match = (_calc.rates.lease || []).find(r => r.term === term);
+      if (match) {
+        const baseRes = Number(match.residual_pct) || 55;
+        const adj = (_calc.rates.mileage_degradation || {})[_calc.mileage] || 0;
+        _calc.residual_pct = Math.max(baseRes + adj, 0);
+        if (match.money_factor != null) _calc.money_factor = Number(match.money_factor);
+        if (match.acq_fee != null) _calc.acq_fee = Number(match.acq_fee);
+      }
+      _drawStep4();
+    };
+
+    // Wrap goToStep so step 4 lazy-renders the calculator the first time we land there
+    const _origGoToStep = window.goToStep;
+    window.goToStep = function (n) {
+      _origGoToStep(n);
+      if (n === 4) _renderStep4();
     };
 
     // ───────────── Share button ─────────────

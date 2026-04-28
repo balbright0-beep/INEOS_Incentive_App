@@ -1485,44 +1485,40 @@
 
     function LookupPage() {
       const toast = React.useContext(ToastContext);
-      const [form, setForm] = React.useState({
-        vin: '', model_year: 'MY25', body_style: 'station_wagon', trim: '', special_edition: '',
-        msrp: '', finance_type: 'cash', lender: '', state: '', zip_code: '',
-        conquest: false, conquest_brand: '', loyalty: false, loyalty_vin: '', _state_name: '',
+      const [step, setStep] = React.useState(1);
+      const [vehicle, setVehicle] = React.useState({
+        vin: '', model_year: 'MY26', body_style: 'station_wagon', trim: '', zip_code: '', state: '',
       });
-      const [result, setResult] = React.useState(null);
-      const [loading, setLoading] = React.useState(false);
-      const [vinLoading, setVinLoading] = React.useState(false);
-
-      const update = (key, val) => setForm(f => ({ ...f, [key]: val }));
-
       const [vinData, setVinData] = React.useState(null);
-      const vinActiveRef = React.useRef(false); // true when VIN has populated the form
+      const [vinLoading, setVinLoading] = React.useState(false);
+      const [stateName, setStateName] = React.useState('');
+      const [preview, setPreview] = React.useState(null);
+      const [previewLoading, setPreviewLoading] = React.useState(false);
+      const [dealType, setDealType] = React.useState(null);
+      const [lookup, setLookup] = React.useState(null);
+      const [lookupLoading, setLookupLoading] = React.useState(false);
+      const [selectedIds, setSelectedIds] = React.useState(new Set());
 
-      // Auto-lookup VIN when it reaches 17 characters
+      const updateVehicle = (key, val) => setVehicle(v => ({ ...v, [key]: val }));
+      const vinActiveRef = React.useRef(false);
+
+      // VIN auto-lookup
       React.useEffect(() => {
-        const vin = form.vin.trim().toUpperCase();
+        const vin = vehicle.vin.trim().toUpperCase();
         if (vin.length < 17) {
-          // VIN cleared or incomplete — reset VIN state, allow manual selectors
-          if (vinActiveRef.current) {
-            vinActiveRef.current = false;
-            setVinData(null);
-          }
+          if (vinActiveRef.current) { vinActiveRef.current = false; setVinData(null); }
           return;
         }
-        // VIN is 17 chars — look it up
         setVinLoading(true);
         API.get(`/lookup/vin/${vin}`)
           .then(data => {
             vinActiveRef.current = true;
             setVinData(data);
-            setForm(f => ({
-              ...f,
-              model_year: data.model_year || f.model_year,
-              body_style: data.body_style || f.body_style,
-              trim: data.trim || f.trim,
-              msrp: data.msrp ? String(Math.round(data.msrp)) : f.msrp,
-              special_edition: data.special_edition || f.special_edition,
+            setVehicle(v => ({
+              ...v,
+              model_year: data.model_year || v.model_year,
+              body_style: data.body_style || v.body_style,
+              trim: data.trim || v.trim,
             }));
             toast.show(`Vehicle found: ${data.model_year || ''} ${(data.body_style || '').replace('_',' ')} ${data.trim || ''}${data.color_exterior ? ' — ' + data.color_exterior : ''}`);
           })
@@ -1532,186 +1528,391 @@
             toast.show('VIN not found in inventory. Select details manually.', 'warning');
           })
           .finally(() => setVinLoading(false));
-      }, [form.vin]);
+      }, [vehicle.vin]);
 
-      // Auto-fetch MSRP from product catalog when manual selectors change
-      // Only fires when VIN hasn't populated the form
-      React.useEffect(() => {
-        if (vinActiveRef.current) return;
-        const params = `model_year=${form.model_year}&body_style=${form.body_style}${form.trim ? '&trim=' + encodeURIComponent(form.trim) : ''}`;
-        API.get(`/lookup/msrp?${params}`).then(data => {
-          if (data.msrp && !vinActiveRef.current) {
-            setForm(f => ({...f, msrp: String(data.msrp)}));
-          }
-        }).catch(() => {});
-      }, [form.model_year, form.body_style, form.trim]);
-
-      async function handleLookup(e) {
-        e.preventDefault();
-        setLoading(true); setResult(null);
-        try {
-          // Clean form: convert empty strings to null for optional fields
-          const clean = {...form};
-          ['vin','trim','special_edition','msrp','lender','state','zip_code','conquest_brand','loyalty_vin'].forEach(k => {
-            if (clean[k] === '') clean[k] = null;
-          });
-          if (clean.msrp) clean.msrp = parseFloat(clean.msrp);
-          delete clean._state_name; // internal field, not for API
-          const res = await API.post('/lookup', clean);
-          setResult(res);
-        } catch (e) {
-          toast.show(e.message, 'error');
-          setResult(null);
-        } finally { setLoading(false); }
+      function resetWizard() {
+        setStep(1);
+        setVehicle({ vin: '', model_year: 'MY26', body_style: 'station_wagon', trim: '', zip_code: '', state: '' });
+        setVinData(null);
+        setStateName('');
+        setPreview(null);
+        setDealType(null);
+        setLookup(null);
+        setSelectedIds(new Set());
+        vinActiveRef.current = false;
       }
 
-      return (
-        <div className="fade-in max-w-7xl mx-auto">
-          <h1 className="text-2xl font-bold text-onyx mb-6">Incentive Lookup</h1>
-          <div className="flex flex-col lg:flex-row gap-6">
-            <div className="w-full lg:w-[380px] lg:flex-shrink-0">
-              <Card className="p-6">
-                <form onSubmit={handleLookup}>
-                  <h3 className="font-semibold text-onyx mb-4 uppercase text-xs tracking-wider">Vehicle Information</h3>
-                  <div className="mb-2">
-                    <Input label="VIN Lookup" value={form.vin} onChange={e => update('vin', e.target.value.toUpperCase())}
-                      placeholder="Enter VIN to auto-populate vehicle details" className="font-mono" />
-                    {vinLoading && <p className="text-xs text-silver-dust mt-1">Searching inventory...</p>}
-                  </div>
+      async function handleStep1Continue(e) {
+        e.preventDefault();
+        if (!vehicle.zip_code || vehicle.zip_code.replace(/\D/g, '').length < 5) {
+          toast.show('Enter a 5-digit ZIP so state-specific programs filter correctly.', 'warning');
+          return;
+        }
+        setPreviewLoading(true);
+        try {
+          const body = {
+            vin: vehicle.vin || null,
+            model_year: vehicle.model_year,
+            body_style: vehicle.body_style,
+            trim: vehicle.trim || null,
+            zip_code: vehicle.zip_code,
+            state: vehicle.state || null,
+          };
+          const r = await API.post('/lookup/preview', body);
+          setPreview(r);
+          setStep(2);
+        } catch (e) {
+          toast.show(e.message || 'Could not load deal types', 'error');
+        } finally {
+          setPreviewLoading(false);
+        }
+      }
 
-                  {/* VIN match info */}
-                  {vinData && (
-                    <div className="p-3 bg-success/5 border border-success/20 rounded-md mb-2 text-xs fade-in">
-                      <div className="flex items-center gap-2 mb-1">
-                        <span className="font-semibold text-success">Vehicle Found</span>
-                        <Badge variant={vinData.source === 'inventory' ? 'active' : 'draft'}>
-                          {vinData.source === 'inventory' ? 'Inventory' : 'VIN Pattern'}
-                        </Badge>
-                      </div>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-iron-smoke">
-                        <span>{vinData.model_year} {(vinData.body_style || '').replace('_',' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
-                        <span>{vinData.trim || ''}</span>
-                        {vinData.color_exterior && <span>Ext: {vinData.color_exterior}</span>}
-                        {vinData.msrp && <span>MSRP: ${Number(vinData.msrp).toLocaleString()}</span>}
-                        {vinData.dealer_name && <span>Dealer: {vinData.dealer_name}</span>}
-                        {vinData.status && <span>Status: {vinData.status}</span>}
-                      </div>
+      async function selectDealTypeAndLoad(dt) {
+        setDealType(dt);
+        setStep(3);
+        setLookupLoading(true);
+        setLookup(null);
+        try {
+          const body = {
+            vin: vehicle.vin || null,
+            model_year: vehicle.model_year,
+            body_style: vehicle.body_style,
+            trim: vehicle.trim || null,
+            finance_type: dt,
+            zip_code: vehicle.zip_code || null,
+            state: vehicle.state || null,
+            conquest: false,
+            loyalty: false,
+          };
+          const r = await API.post('/lookup', body);
+          setLookup(r);
+          setSelectedIds(new Set((r.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id)));
+        } catch (e) {
+          toast.show(e.message || 'Lookup failed', 'error');
+        } finally {
+          setLookupLoading(false);
+        }
+      }
+
+      function toggleProgram(id) {
+        setSelectedIds(prev => {
+          const next = new Set(prev);
+          if (next.has(id)) next.delete(id);
+          else next.add(id);
+          return next;
+        });
+      }
+
+      // Selection-derived totals + conflicts
+      const selection = React.useMemo(() => {
+        if (!lookup) return null;
+        const eligible = lookup.eligible_programs || [];
+        let total = 0;
+        const conflicts = [];
+        for (const p of eligible) {
+          if (!selectedIds.has(p.program_id)) continue;
+          total += p.amount;
+          for (const otherId of (p.conflicts_with || [])) {
+            if (selectedIds.has(otherId)) {
+              const other = eligible.find(x => x.program_id === otherId);
+              if (other) conflicts.push(`${p.program_name} cannot be combined with ${other.program_name}`);
+            }
+          }
+        }
+        return {
+          eligible,
+          total,
+          conflictSet: Array.from(new Set(conflicts)),
+          noEligible: eligible.length === 0,
+          totalChanged: Math.abs(total - lookup.total_support_amount) > 0.01,
+        };
+      }, [lookup, selectedIds]);
+
+      const stepDef = [
+        { n: 1, label: 'Vehicle' },
+        { n: 2, label: 'Deal Type' },
+        { n: 3, label: 'Programs' },
+        { n: 4, label: 'Result' },
+      ];
+
+      return (
+        <div className="fade-in max-w-5xl mx-auto">
+          <h1 className="text-2xl font-bold text-onyx mb-2">Incentive Lookup</h1>
+          <p className="text-sm text-iron-smoke mb-6">Step through your vehicle, deal type, and program selection. We'll show the campaign code and an estimated payment at the end.</p>
+
+          {/* Stepper */}
+          <div className="flex bg-white border border-dove rounded-lg overflow-hidden mb-6">
+            {stepDef.map((s, i) => {
+              const done = step > s.n, active = step === s.n;
+              const numBg = active ? 'bg-flare-red text-white' : done ? 'bg-success text-white' : 'bg-dove text-iron-smoke';
+              const textColor = active ? 'text-onyx' : done ? 'text-success' : 'text-silver-dust';
+              const clickable = done || s.n < step;
+              return (
+                <div key={s.n} onClick={() => clickable && setStep(s.n)}
+                  className={`flex-1 flex items-center gap-2 px-4 py-3 text-xs uppercase tracking-wider font-mono ${textColor} ${clickable ? 'cursor-pointer hover:bg-mushroom-light' : ''} ${i < stepDef.length - 1 ? 'border-r border-dove' : ''}`}>
+                  <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full text-xs font-bold ${numBg}`}>{s.n}</span>
+                  <span>{s.label}</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Step 1: Vehicle + ZIP */}
+          {step === 1 && (
+            <Card className="p-6 max-w-xl mx-auto fade-in">
+              <form onSubmit={handleStep1Continue}>
+                <h3 className="font-semibold text-onyx mb-4 uppercase text-xs tracking-wider">Vehicle Information</h3>
+                <Input label="VIN Lookup" value={vehicle.vin} onChange={e => updateVehicle('vin', e.target.value.toUpperCase())}
+                  placeholder="Enter VIN to auto-populate vehicle details" className="font-mono" />
+                {vinLoading && <p className="text-xs text-silver-dust mt-1 mb-2">Searching inventory...</p>}
+                {vinData && (
+                  <div className="p-3 bg-success/5 border border-success/20 rounded-md my-2 text-xs fade-in">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className="font-semibold text-success">Vehicle Found</span>
+                      <Badge variant={vinData.source === 'inventory' ? 'active' : 'draft'}>
+                        {vinData.source === 'inventory' ? 'Inventory' : 'VIN Pattern'}
+                      </Badge>
+                    </div>
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-0.5 text-iron-smoke">
+                      <span>{vinData.model_year} {(vinData.body_style || '').replace('_',' ').replace(/\b\w/g, c => c.toUpperCase())}</span>
+                      <span>{vinData.trim || ''}</span>
+                      {vinData.color_exterior && <span>Ext: {vinData.color_exterior}</span>}
+                      {vinData.msrp && <span>MSRP: ${Number(vinData.msrp).toLocaleString()}</span>}
+                    </div>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 my-4">
+                  <div className="flex-1 h-px bg-mushroom"></div>
+                  <span className="text-xs font-semibold text-silver-dust uppercase tracking-widest">or select manually</span>
+                  <div className="flex-1 h-px bg-mushroom"></div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <Select label="Model Year" value={vehicle.model_year} onChange={e => updateVehicle('model_year', e.target.value)}
+                    options={[{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'},{value:'MY27',label:'MY27'}]} />
+                  <Select label="Body Style" value={vehicle.body_style} onChange={e => updateVehicle('body_style', e.target.value)}
+                    options={[{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}]} />
+                </div>
+                <Select label="Trim" value={vehicle.trim} onChange={e => updateVehicle('trim', e.target.value)} className="mb-4"
+                  options={[{value:'',label:'Any'},{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},
+                    {value:'Belstaff',label:'Belstaff'},{value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'}]} />
+
+                <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Location</h3>
+                <Input label="ZIP Code" value={vehicle.zip_code} onChange={e => {
+                  const v = e.target.value.replace(/\D/g, '').slice(0, 5);
+                  updateVehicle('zip_code', v);
+                  if (v.length >= 5) {
+                    API.get(`/lookup/zip/${v}`).then(r => {
+                      updateVehicle('state', r.state);
+                      setStateName(r.state_name || '');
+                    }).catch(() => {});
+                  }
+                }} placeholder="e.g., 92101" className="w-32" />
+                {vehicle.state && <p className="text-xs text-success mt-1">Resolved: {vehicle.state}{stateName ? ` (${stateName})` : ''}</p>}
+
+                <Button type="submit" disabled={previewLoading} className="w-full mt-6">
+                  {previewLoading ? 'Loading…' : 'Continue →'}
+                </Button>
+              </form>
+            </Card>
+          )}
+
+          {/* Step 2: Deal Type */}
+          {step === 2 && (
+            <div className="fade-in">
+              <div className="text-center mb-5">
+                <h2 className="text-xl font-bold text-onyx">Choose How You'd Like to Pay</h2>
+                <p className="text-sm text-iron-smoke mt-1">Each option shows the total support available for this vehicle and ZIP.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                {[
+                  { id: 'cash', name: 'Cash', sub: 'Pay in full' },
+                  { id: 'apr', name: 'APR', sub: 'Finance with Santander' },
+                  { id: 'lease', name: 'Lease', sub: 'Lease with Santander' },
+                ].map(c => {
+                  const p = preview?.[c.id] || { available: false, total: 0, program_count: 0 };
+                  return (
+                    <button key={c.id} type="button" disabled={!p.available} onClick={() => selectDealTypeAndLoad(c.id)}
+                      className={`text-left p-6 rounded-lg border-2 transition-all ${p.available ? 'bg-white border-dove hover:border-flare-red hover:shadow-lg cursor-pointer' : 'bg-mushroom-light border-dove opacity-50 cursor-not-allowed'}`}>
+                      <div className="text-xs uppercase tracking-wider text-iron-smoke font-mono">{c.sub}</div>
+                      <div className="text-2xl font-bold text-onyx mt-1">{c.name}</div>
+                      {p.available ? (
+                        <>
+                          <div className="text-3xl font-bold text-success font-mono mt-3">${Number(p.total).toLocaleString()}</div>
+                          <div className="text-xs text-iron-smoke mt-1">{p.program_count} program{p.program_count === 1 ? '' : 's'} available</div>
+                        </>
+                      ) : (
+                        <>
+                          <div className="text-3xl font-bold text-silver-dust font-mono mt-3">—</div>
+                          <div className="text-xs text-silver-dust mt-1">No active programs for this configuration</div>
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="flex justify-center mt-6">
+                <Button onClick={() => setStep(1)} className="bg-white text-onyx border border-dove hover:bg-mushroom-light">← Back</Button>
+              </div>
+            </div>
+          )}
+
+          {/* Step 3: Programs */}
+          {step === 3 && (
+            <div className="fade-in max-w-3xl mx-auto">
+              <div className="text-center mb-5">
+                <h2 className="text-xl font-bold text-onyx">Choose Your Programs</h2>
+                <p className="text-sm text-iron-smoke mt-1">Default selection auto-stacks everything compatible. Toggle any program to include or skip it.</p>
+              </div>
+              {lookupLoading ? (
+                <Card className="p-12 text-center text-silver-dust">Loading programs…</Card>
+              ) : !lookup ? (
+                <Card className="p-12 text-center">
+                  <h3 className="text-base text-error mb-1">No Active Program</h3>
+                  <p className="text-sm text-iron-smoke">No active incentive program for this configuration.</p>
+                </Card>
+              ) : (
+                <>
+                  <Card className="p-5 mb-4 flex justify-between items-center flex-wrap gap-3">
+                    <div>
+                      <div className="text-xs font-mono uppercase tracking-wider text-silver-dust mb-1">Running Total</div>
+                      <div className="text-xs text-iron-smoke">{lookup.model_year} · {(lookup.body_style || '').replace('_',' ').toUpperCase()} · {(lookup.deal_type || '').toUpperCase()}</div>
+                    </div>
+                    <div className={`text-3xl font-bold font-mono ${selection?.total === 0 ? 'text-silver-dust' : 'text-success'}`}>${Number(selection?.total || 0).toLocaleString()}</div>
+                  </Card>
+                  {selection?.conflictSet?.length > 0 && (
+                    <div className="mb-3 p-3 bg-error/5 border-l-4 border-error rounded text-xs text-error">
+                      <b>Selection conflict:</b> {selection.conflictSet.join(' · ')}
                     </div>
                   )}
-
-                  {/* OR Divider */}
-                  <div className="flex items-center gap-3 my-3">
-                    <div className="flex-1 h-px bg-mushroom"></div>
-                    <span className="text-xs font-semibold text-silver-dust uppercase tracking-widest">or select manually</span>
-                    <div className="flex-1 h-px bg-mushroom"></div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 mb-3">
-                    <Select label="Model Year" value={form.model_year} onChange={e => update('model_year', e.target.value)}
-                      options={[{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'},{value:'MY27',label:'MY27'}]} />
-                    <Select label="Body Style" value={form.body_style} onChange={e => update('body_style', e.target.value)}
-                      options={[{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}]} />
-                  </div>
-                  <Select label="Trim" value={form.trim} onChange={e => update('trim', e.target.value)} className="mb-3"
-                    options={[{value:'',label:'Any'},{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},
-                      {value:'Belstaff',label:'Belstaff'},{value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'}]} />
-
-                  <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Deal Information</h3>
-                  <Select label="Finance Type" value={form.finance_type} onChange={e => update('finance_type', e.target.value)} className="mb-3"
-                    options={[{value:'cash',label:'Cash'},{value:'apr',label:'APR (Finance)'},{value:'lease',label:'Lease'}]} />
-
-                  <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Location</h3>
-                  <div className="flex gap-2 mb-2">
-                    <Input label="ZIP Code" value={form.zip_code} onChange={e => {
-                      update('zip_code', e.target.value);
-                      // Auto-resolve state when 5 digits entered
-                      const z = e.target.value.replace(/\D/g, '');
-                      if (z.length >= 5) {
-                        API.get(`/lookup/zip/${z}`).then(r => {
-                          update('state', r.state);
-                          update('_state_name', r.state_name);
-                        }).catch(() => {});
-                      }
-                    }} placeholder="e.g., 92101" className="w-28" />
-                    <Select label="State" value={form.state} onChange={e => update('state', e.target.value)} className="flex-1"
-                      options={[{value:'',label:'Auto from ZIP'},
-                        {value:'AL',label:'AL'},{value:'AK',label:'AK'},{value:'AZ',label:'AZ'},{value:'AR',label:'AR'},
-                        {value:'CA',label:'CA'},{value:'CO',label:'CO'},{value:'CT',label:'CT'},{value:'DE',label:'DE'},
-                        {value:'FL',label:'FL'},{value:'GA',label:'GA'},{value:'HI',label:'HI'},{value:'ID',label:'ID'},
-                        {value:'IL',label:'IL'},{value:'IN',label:'IN'},{value:'IA',label:'IA'},{value:'KS',label:'KS'},
-                        {value:'KY',label:'KY'},{value:'LA',label:'LA'},{value:'ME',label:'ME'},{value:'MD',label:'MD'},
-                        {value:'MA',label:'MA'},{value:'MI',label:'MI'},{value:'MN',label:'MN'},{value:'MS',label:'MS'},
-                        {value:'MO',label:'MO'},{value:'MT',label:'MT'},{value:'NE',label:'NE'},{value:'NV',label:'NV'},
-                        {value:'NH',label:'NH'},{value:'NJ',label:'NJ'},{value:'NM',label:'NM'},{value:'NY',label:'NY'},
-                        {value:'NC',label:'NC'},{value:'ND',label:'ND'},{value:'OH',label:'OH'},{value:'OK',label:'OK'},
-                        {value:'OR',label:'OR'},{value:'PA',label:'PA'},{value:'RI',label:'RI'},{value:'SC',label:'SC'},
-                        {value:'SD',label:'SD'},{value:'TN',label:'TN'},{value:'TX',label:'TX'},{value:'UT',label:'UT'},
-                        {value:'VT',label:'VT'},{value:'VA',label:'VA'},{value:'WA',label:'WA'},{value:'WV',label:'WV'},
-                        {value:'WI',label:'WI'},{value:'WY',label:'WY'},{value:'DC',label:'DC'},
-                      ]} />
-                  </div>
-                  {form.state && <p className="text-xs text-success mb-3">Resolved: {form.state}{form._state_name ? ` (${form._state_name})` : ''}</p>}
-
-                  <Button type="submit" disabled={loading} className="w-full mt-6">
-                    {loading ? 'Looking up...' : 'Find Incentive Code'}
-                  </Button>
-                </form>
-              </Card>
-            </div>
-
-            <div className="flex-1 min-w-0">
-              {result ? (
-                <div className="fade-in">
-                  <Card className="p-8 border-2 border-flare-red/20 mb-4">
-                    <div className="text-center">
-                      <p className="text-xs uppercase tracking-wider text-silver-dust mb-2">Campaign Code to Enter in SAP</p>
-                      <div className="inline-block bg-onyx text-white px-8 py-4 rounded-lg mb-3">
-                        <span className="text-5xl font-bold tracking-widest">{result.code}</span>
-                      </div>
-                      <p className="text-3xl font-bold text-success">${result.total_support_amount.toLocaleString()}</p>
-                      <p className="text-sm text-silver-dust mt-1">Total Support Amount</p>
-                    </div>
-                  </Card>
-
-                  <Card className="p-6 mb-4">
-                    <h3 className="text-sm font-semibold text-onyx uppercase mb-4">Incentive Breakdown</h3>
-                    <div className="space-y-2">
-                      {result.layers.map((l, i) => (
-                        <div key={i} className="flex justify-between py-2 border-b border-dove/50">
-                          <span className="text-sm">{l.program_name}</span>
-                          <span className="text-sm font-semibold">${l.amount.toLocaleString()}</span>
+                  {selection?.noEligible ? (
+                    <Card className="p-12 text-center">
+                      <h3 className="text-base text-iron-smoke mb-1">No additional programs</h3>
+                      <p className="text-sm text-silver-dust">Continue to see the base campaign code for this deal type.</p>
+                    </Card>
+                  ) : (
+                    <Card className="p-5">
+                      <div className="flex justify-between items-end mb-3 flex-wrap gap-2">
+                        <div>
+                          <h3 className="text-xs uppercase tracking-wider font-mono text-onyx">Available Programs</h3>
+                          <p className="text-xs text-iron-smoke mt-1">Toggle any program to include or skip it.</p>
                         </div>
-                      ))}
-                      <div className="flex justify-between py-2 border-t-2 border-onyx">
-                        <span className="font-bold">TOTAL SUPPORT</span>
-                        <span className="font-bold text-lg">${result.total_support_amount.toLocaleString()}</span>
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => setSelectedIds(new Set((lookup.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id)))}
+                            className="text-xs font-mono px-3 py-1.5 border border-dove rounded hover:bg-mushroom-light">Reset to Default</button>
+                          <button type="button" onClick={() => setSelectedIds(new Set())}
+                            className="text-xs font-mono px-3 py-1.5 border border-dove rounded text-error hover:bg-error/5">Clear All</button>
+                        </div>
                       </div>
-                    </div>
-                  </Card>
-
-                  {/* Payment Estimator */}
-                  <PaymentEstimator dealType={form.finance_type} incentive={result.total_support_amount} initMsrp={form.msrp || (vinData?.msrp ? String(vinData.msrp) : '75000')} modelYear={form.model_year} bodyStyle={form.body_style} trim={form.trim || (vinData?.trim)} />
-
-                  {result.not_applicable?.length > 0 && (
-                    <Card className="p-6 opacity-60">
-                      <h3 className="text-sm font-semibold text-silver-dust uppercase mb-3">Not Applicable</h3>
-                      {result.not_applicable.map((na, i) => (
-                        <div key={i} className="text-xs text-silver-dust mb-1">{na.label} — {na.reason}</div>
-                      ))}
+                      <div className="space-y-2">
+                        {(lookup.eligible_programs || []).map(p => {
+                          const sel = selectedIds.has(p.program_id);
+                          return (
+                            <label key={p.program_id}
+                              className={`flex items-start gap-3 p-3 rounded border cursor-pointer transition-colors ${sel ? 'border-flare-red bg-flare-red/5' : 'border-dove bg-white'}`}>
+                              <input type="checkbox" checked={sel} onChange={() => toggleProgram(p.program_id)}
+                                className="mt-1 w-4 h-4 accent-flare-red cursor-pointer" />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex justify-between items-center gap-3 flex-wrap">
+                                  <div className="font-semibold text-onyx text-sm">
+                                    {p.program_name}
+                                    <span className={`ml-2 inline-block px-2 py-0.5 rounded-full text-[10px] font-mono uppercase ${p.auto_selected ? 'bg-success/10 text-success' : 'bg-amber-100 text-amber-800'}`}>
+                                      {p.auto_selected ? 'Default' : 'Alternative'}
+                                    </span>
+                                  </div>
+                                  <div className={`font-mono font-bold text-sm ${sel ? 'text-success' : 'text-silver-dust'}`}>${Number(p.amount).toLocaleString()}</div>
+                                </div>
+                                <div className="text-[11px] font-mono uppercase tracking-wide text-iron-smoke mt-0.5">{(p.program_type || '').replace('_', ' ')}</div>
+                                {(p.conflicts_with || []).length > 0 && (
+                                  <div className="text-[11px] text-silver-dust mt-1">
+                                    Mutually exclusive with {(p.conflicts_with || []).map(id => {
+                                      const o = (lookup.eligible_programs || []).find(x => x.program_id === id);
+                                      return o ? o.program_name : id.slice(0, 8);
+                                    }).join(', ')}
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          );
+                        })}
+                      </div>
                     </Card>
                   )}
-                </div>
-              ) : (
-                <div className="flex items-center justify-center h-full text-silver-dust">
-                  <div className="text-center">
-                    <span className="text-6xl block mb-4">⊕</span>
-                    <p className="text-lg">Enter deal details to find the campaign code</p>
-                    <p className="text-sm mt-2">One code. One amount. Zero guesswork.</p>
-                  </div>
-                </div>
+                </>
               )}
+              <div className="flex justify-between mt-6 gap-2">
+                <Button onClick={() => setStep(2)} className="bg-white text-onyx border border-dove hover:bg-mushroom-light">← Back</Button>
+                <Button onClick={() => setStep(4)} disabled={!lookup}>Continue to Result →</Button>
+              </div>
             </div>
-          </div>
+          )}
+
+          {/* Step 4: Result + Calculator */}
+          {step === 4 && lookup && (
+            <div className="fade-in">
+              <Card className="p-8 border-2 border-flare-red/20 mb-4 text-center">
+                {selection?.total === 0 && !selection?.noEligible ? (
+                  <>
+                    <div className="inline-block bg-silver-dust text-white px-7 py-3 rounded-lg mb-3">
+                      <span className="text-lg font-mono tracking-wider font-bold">NO INCENTIVE</span>
+                    </div>
+                    <p className="text-xs text-iron-smoke">Customer doesn't qualify for available programs.</p>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs uppercase tracking-wider text-silver-dust mb-2 font-mono">Campaign Code to Enter in SAP</p>
+                    <div className="inline-block bg-onyx text-white px-8 py-4 rounded-lg mb-3">
+                      <span className="text-5xl font-bold tracking-widest font-mono">{lookup.code}</span>
+                    </div>
+                    <p className={`text-3xl font-bold ${selection?.total === 0 ? 'text-silver-dust' : 'text-success'}`}>${Number(selection?.total || 0).toLocaleString()}</p>
+                    <p className="text-xs text-silver-dust mt-1">
+                      {selection?.noEligible ? 'Base code for this deal type — no incentive programs apply'
+                        : selection?.totalChanged ? `Adjusted from default $${Number(lookup.total_support_amount).toLocaleString()} based on selection`
+                        : 'Total Support Amount'}
+                      {lookup.label ? ' · ' + lookup.label : ''}
+                    </p>
+                  </>
+                )}
+                <div className="text-[11px] text-iron-smoke font-mono uppercase tracking-wider mt-3">
+                  {lookup.model_year} · {(lookup.body_style || '').replace('_',' ').toUpperCase()} · {(lookup.deal_type || '').toUpperCase()}
+                </div>
+              </Card>
+
+              {selection?.eligible?.filter(p => selectedIds.has(p.program_id)).length > 0 && (
+                <Card className="p-5 mb-4">
+                  <h3 className="text-xs uppercase tracking-wider font-mono text-onyx mb-3">Selected Programs</h3>
+                  <div className="space-y-1">
+                    {selection.eligible.filter(p => selectedIds.has(p.program_id)).map((p, i) => (
+                      <div key={i} className="flex justify-between py-2 border-b border-dove/40 text-sm">
+                        <span>{p.program_name} <span className="ml-2 px-2 py-0.5 bg-mushroom rounded-full text-[10px] font-mono uppercase">{(p.program_type || '').replace('_', ' ')}</span></span>
+                        <span className="font-mono font-semibold text-success">${Number(p.amount).toLocaleString()}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between py-2 border-t-2 border-onyx font-bold">
+                      <span>Total Support</span>
+                      <span className="font-mono">${Number(selection?.total || 0).toLocaleString()}</span>
+                    </div>
+                  </div>
+                </Card>
+              )}
+
+              <PaymentEstimator
+                dealType={dealType}
+                incentive={selection?.total || 0}
+                initMsrp={vinData?.msrp ? String(Math.round(vinData.msrp)) : '75000'}
+                modelYear={vehicle.model_year}
+                bodyStyle={vehicle.body_style}
+                trim={vehicle.trim || (vinData?.trim)}
+              />
+
+              <div className="flex justify-between mt-6 gap-2">
+                <Button onClick={() => setStep(3)} className="bg-white text-onyx border border-dove hover:bg-mushroom-light">← Back to Programs</Button>
+                <Button onClick={resetWizard} className="bg-white text-onyx border border-dove hover:bg-mushroom-light">Start Over</Button>
+              </div>
+            </div>
+          )}
         </div>
       );
     }

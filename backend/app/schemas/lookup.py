@@ -54,3 +54,29 @@ class LookupResponse(BaseModel):
     deal_type: str
     loyalty: bool
     conquest: bool
+
+
+class DealTypePreview(BaseModel):
+    """One deal-type summary for the wizard's step 2 cards. `available`
+    is False when no campaign code matches at all (greyed-out card)."""
+    deal_type: str
+    total: float
+    program_count: int
+    available: bool
+
+
+class PreviewRequest(BaseModel):
+    vin: Optional[str] = None
+    model_year: str
+    body_style: str
+    trim: Optional[str] = None
+    special_edition: Optional[str] = None
+    msrp: Optional[float] = None
+    state: Optional[str] = None
+    zip_code: Optional[str] = None
+
+
+class PreviewResponse(BaseModel):
+    cash: DealTypePreview
+    apr: DealTypePreview
+    lease: DealTypePreview
