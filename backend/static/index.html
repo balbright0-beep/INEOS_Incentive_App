@@ -1652,25 +1652,6 @@
                   </div>
                   {form.state && <p className="text-xs text-success mb-3">Resolved: {form.state}{form._state_name ? ` (${form._state_name})` : ''}</p>}
 
-                  <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Qualifications</h3>
-                  <div className="space-y-3">
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" checked={form.conquest} onChange={e => update('conquest', e.target.checked)}
-                        className="w-4 h-4 rounded border-mushroom text-flare-red focus:ring-flare-red" />
-                      <span className="text-sm">Conquest (Competitive Trade-In)</span>
-                    </label>
-                    {form.conquest && (
-                      <Input label="Competitor Brand" value={form.conquest_brand} onChange={e => update('conquest_brand', e.target.value)} placeholder="e.g., Land Rover" />
-                    )}
-                    <label className="flex items-center gap-3 cursor-pointer">
-                      <input type="checkbox" checked={form.loyalty} onChange={e => update('loyalty', e.target.checked)}
-                        className="w-4 h-4 rounded border-mushroom text-flare-red focus:ring-flare-red" />
-                      <span className="text-sm">Loyalty (Existing INEOS Household)</span>
-                    </label>
-                    {form.loyalty && (
-                      <Input label="Existing Household VIN" value={form.loyalty_vin} onChange={e => update('loyalty_vin', e.target.value)} />
-                    )}
-                  </div>
                   <Button type="submit" disabled={loading} className="w-full mt-6">
                     {loading ? 'Looking up...' : 'Find Incentive Code'}
                   </Button>
