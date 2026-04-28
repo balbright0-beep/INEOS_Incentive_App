@@ -413,22 +413,6 @@
           </div>
           <p id="zip-status" style="font-size:11px;color:#2C931E;margin-top:4px;min-height:14px"></p>
 
-          <h3 class="eyebrow" style="margin:22px 0 8px;color:#1D1D1D">Customer Qualifications</h3>
-          <label class="checkbox-row">
-            <input type="checkbox" id="conquest"> <span>Conquest (Competitive Trade-In)</span>
-          </label>
-          <div id="conquest-brand-wrap" style="display:none;margin:0 0 6px 26px">
-            <label class="field-label" for="conquest_brand">Competitor Brand</label>
-            <input id="conquest_brand" class="field-input" placeholder="e.g. Land Rover">
-          </div>
-          <label class="checkbox-row">
-            <input type="checkbox" id="loyalty"> <span>Loyalty (Existing INEOS Household)</span>
-          </label>
-          <div id="loyalty-vin-wrap" style="display:none;margin:0 0 6px 26px">
-            <label class="field-label" for="loyalty_vin">Existing Household VIN</label>
-            <input id="loyalty_vin" class="field-input font-mono" maxlength="17">
-          </div>
-
           <button type="submit" class="btn-primary" id="submit-btn" style="width:100%;margin-top:18px">
             <span id="submit-label">Find Incentive Code</span>
           </button>
@@ -636,10 +620,6 @@
       }, 200);
     });
 
-    // ───────────── Conquest / Loyalty visibility ─────────────
-    $('conquest').addEventListener('change', e => $('conquest-brand-wrap').style.display = e.target.checked ? 'block' : 'none');
-    $('loyalty').addEventListener('change', e => $('loyalty-vin-wrap').style.display = e.target.checked ? 'block' : 'none');
-
     // ───────────── Submit ─────────────
     $('lookup-form').addEventListener('submit', async (e) => {
       e.preventDefault();
@@ -658,10 +638,10 @@
         finance_type: $('finance_type').value,
         zip_code: $('zip_code').value || null,
         state: $('state').value || null,
-        conquest: $('conquest').checked,
-        conquest_brand: $('conquest').checked ? ($('conquest_brand').value || null) : null,
-        loyalty: $('loyalty').checked,
-        loyalty_vin: $('loyalty').checked ? ($('loyalty_vin').value || null) : null,
+        conquest: false,
+        conquest_brand: null,
+        loyalty: false,
+        loyalty_vin: null,
       };
 
       try {
