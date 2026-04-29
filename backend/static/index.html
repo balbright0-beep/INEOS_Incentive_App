@@ -1491,6 +1491,10 @@
       });
       const [vinData, setVinData] = React.useState(null);
       const [vinLoading, setVinLoading] = React.useState(false);
+      // Catalog MSRP for the current (model_year, body_style, trim) combo —
+      // used as the calculator's MSRP when no specific VIN matched. The
+      // VIN's actual MSRP wins when a real unit is in inventory.
+      const [catalogMsrp, setCatalogMsrp] = React.useState(null);
       const [stateName, setStateName] = React.useState('');
       const [preview, setPreview] = React.useState(null);
       const [previewLoading, setPreviewLoading] = React.useState(false);
@@ -1530,10 +1534,22 @@
           .finally(() => setVinLoading(false));
       }, [vehicle.vin]);
 
+      // Catalog MSRP fallback — fires when the user picks model/body/trim
+      // manually. VIN-derived MSRP takes precedence in the calculator;
+      // this is what we use when no real unit was matched.
+      React.useEffect(() => {
+        if (vinActiveRef.current) return;
+        const params = `model_year=${encodeURIComponent(vehicle.model_year)}&body_style=${encodeURIComponent(vehicle.body_style)}${vehicle.trim ? '&trim=' + encodeURIComponent(vehicle.trim) : ''}`;
+        API.get(`/lookup/msrp?${params}`).then(data => {
+          if (!vinActiveRef.current) setCatalogMsrp(data?.msrp ? Math.round(Number(data.msrp)) : null);
+        }).catch(() => {});
+      }, [vehicle.model_year, vehicle.body_style, vehicle.trim]);
+
       function resetWizard() {
         setStep(1);
         setVehicle({ vin: '', model_year: 'MY26', body_style: 'station_wagon', trim: '', zip_code: '', state: '' });
         setVinData(null);
+        setCatalogMsrp(null);
         setStateName('');
         setPreview(null);
         setDealType(null);
@@ -1925,6 +1941,45 @@
                 </div>
               </Card>
 
+              {/* Vehicle specs — only when a real VIN matched, so the user can confirm the calc is using their actual unit's MSRP from the Master File hub. */}
+              {vinData && (
+                <Card className="p-5 mb-4">
+                  <div className="flex justify-between items-center mb-3 flex-wrap gap-2">
+                    <h3 className="text-xs uppercase tracking-wider font-mono text-onyx">Your Vehicle</h3>
+                    <Badge variant={vinData.source === 'inventory' ? 'active' : 'draft'}>
+                      {vinData.source === 'inventory' ? 'From Inventory' : 'VIN Pattern'}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">VIN</div>
+                      <div className="text-xs font-mono text-onyx mt-0.5">{vinData.vin}</div>
+                    </div>
+                    {vinData.msrp != null && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">MSRP</div><div className="text-sm text-onyx mt-0.5">${Number(vinData.msrp).toLocaleString()}</div></div>
+                    )}
+                    {vinData.trim && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">Trim</div><div className="text-sm text-onyx mt-0.5">{vinData.trim}</div></div>
+                    )}
+                    {vinData.color_exterior && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">Exterior</div><div className="text-sm text-onyx mt-0.5">{vinData.color_exterior}</div></div>
+                    )}
+                    {vinData.color_interior && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">Interior</div><div className="text-sm text-onyx mt-0.5">{vinData.color_interior}</div></div>
+                    )}
+                    {vinData.dealer_name && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">Dealer</div><div className="text-sm text-onyx mt-0.5">{vinData.dealer_name}</div></div>
+                    )}
+                    {vinData.status && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">Status</div><div className="text-sm text-onyx mt-0.5">{vinData.status}</div></div>
+                    )}
+                    {vinData.material && (
+                      <div><div className="text-[10px] uppercase tracking-wider font-mono text-silver-dust">Material</div><div className="text-sm text-onyx mt-0.5">{vinData.material}</div></div>
+                    )}
+                  </div>
+                </Card>
+              )}
+
               {selection?.eligible?.filter(p => selectedIds.has(p.program_id)).length > 0 && (
                 <Card className="p-5 mb-4">
                   <h3 className="text-xs uppercase tracking-wider font-mono text-onyx mb-3">Selected Programs</h3>
@@ -1946,7 +2001,7 @@
               <PaymentEstimator
                 dealType={dealType}
                 incentive={selection?.total || 0}
-                initMsrp={vinData?.msrp ? String(Math.round(vinData.msrp)) : '75000'}
+                initMsrp={vinData?.msrp ? String(Math.round(vinData.msrp)) : (catalogMsrp ? String(catalogMsrp) : '75000')}
                 modelYear={vehicle.model_year}
                 bodyStyle={vehicle.body_style}
                 trim={vehicle.trim || (vinData?.trim)}

@@ -669,6 +669,7 @@
     }
 
     let vinActive = false;       // true once a 17-char VIN populated the form
+    let _vinData = null;         // last successful VIN lookup payload — sourced from Master File data; carries the actual unit's MSRP, color, dealer, status
     let vinDebounce = null;
     let zipDebounce = null;
 
@@ -704,6 +705,7 @@
         // Reset VIN-driven state once the user shortens the VIN.
         if (vinActive) {
           vinActive = false;
+          _vinData = null;
           $('vin-found').style.display = 'none';
         }
         return;
@@ -714,6 +716,7 @@
           .then(r => r.ok ? r.json() : Promise.reject(r.status))
           .then(data => {
             vinActive = true;
+            _vinData = data;  // remembered so step 4 can use the unit's actual MSRP / dealer / etc instead of the catalog default
             $('vin-status').textContent = '';
             if (data.model_year) $('model_year').value = data.model_year;
             if (data.body_style) $('body_style').value = data.body_style;
@@ -737,6 +740,7 @@
           })
           .catch(() => {
             vinActive = false;
+            _vinData = null;
             $('vin-found').style.display = 'none';
             $('vin-status').textContent = 'VIN not in inventory — select details manually.';
             toast('VIN not found in inventory. Select details manually.', 'warn');
@@ -809,6 +813,8 @@
       $('vin-status').textContent = '';
       $('zip-status').textContent = '';
       vinActive = false;
+      _vinData = null;
+      _calc._loadedFor = null;  // force MSRP/rates re-fetch on the next step 4
       goToStep(1);
     }
     window.resetWizard = resetWizard;
@@ -1194,6 +1200,14 @@
     async function _loadMsrp() {
       const v = _wizard.vehicle;
       if (!v) return;
+      // Prefer the VIN's actual MSRP from the Master File hub when the
+      // user matched a real unit — that's the price on the vehicle the
+      // customer is actually buying. Catalog MSRP is the fallback for
+      // manual configurations where no specific VIN was matched.
+      if (vinActive && _vinData && _vinData.msrp) {
+        _calc.msrp = Number(_vinData.msrp);
+        return;
+      }
       const trim = v.trim ? `&trim=${encodeURIComponent(v.trim)}` : '';
       try {
         const r = await fetch(`/api/lookup/msrp?model_year=${encodeURIComponent(v.model_year)}&body_style=${encodeURIComponent(v.body_style)}${trim}`);
@@ -1258,6 +1272,29 @@
       const calc = _computePayment(total);
       const calcCard = _calculatorCard(_wizard.dealType, calc, total);
 
+      // Vehicle specs card \u2014 shown only when a real VIN matched, so the
+      // user can confirm the calculator is working off their actual unit
+      // (MSRP, color, dealer) rather than a generic catalog config.
+      const vd = (vinActive && _vinData) ? _vinData : null;
+      const specRow = (label, value) => value ? `<div><span class="eyebrow">${label}</span><div style="font-size:13px;color:#1D1D1D;margin-top:2px">${escapeHtml(String(value))}</div></div>` : '';
+      const vehicleCard = vd ? `
+        <div class="card" style="padding:20px;margin-bottom:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+            <h3 class="eyebrow" style="margin:0;color:#1D1D1D">Your Vehicle</h3>
+            <span class="badge ${vd.source === 'inventory' ? 'badge-success' : 'badge-info'}">${vd.source === 'inventory' ? 'From Inventory' : 'VIN Pattern'}</span>
+          </div>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px">
+            <div><span class="eyebrow">VIN</span><div style="font-size:12px;color:#1D1D1D;margin-top:2px;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">${escapeHtml(vd.vin || '')}</div></div>
+            ${specRow('MSRP', vd.msrp ? fmtMoney(vd.msrp) : null)}
+            ${specRow('Trim', vd.trim)}
+            ${specRow('Exterior', vd.color_exterior)}
+            ${specRow('Interior', vd.color_interior)}
+            ${specRow('Dealer', vd.dealer_name)}
+            ${specRow('Status', vd.status)}
+            ${specRow('Material', vd.material)}
+          </div>
+        </div>` : '';
+
       $('step4-content').innerHTML = `
         <div class="card fade-in" style="padding:32px;text-align:center;border:2px solid rgba(255,70,57,0.2);margin-bottom:16px">
           ${codeBlock}
@@ -1266,6 +1303,7 @@
           </div>
         </div>
         ${conflictBanner}
+        ${vehicleCard}
         ${breakdown}
         ${calcCard}`;
     }
