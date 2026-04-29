@@ -761,7 +761,13 @@
           .then(data => {
             if (data.state) {
               $('state').value = data.state;
-              $('zip-status').textContent = `Resolved: ${data.state}${data.state_name ? ' (' + data.state_name + ')' : ''}`;
+              const taxLabel = data.tax_rate ? ` · ${data.tax_rate}% tax` : '';
+              $('zip-status').textContent = `Resolved: ${data.state}${data.state_name ? ' (' + data.state_name + ')' : ''}${taxLabel}`;
+            }
+            // Cache the ZIP-derived tax rate so step 4's calculator can default to it
+            if (typeof data.tax_rate === 'number') {
+              _calc.tax_rate = data.tax_rate;
+              _calc._taxFromZip = true;
             }
           })
           .catch(() => { $('zip-status').textContent = ''; });
@@ -815,6 +821,8 @@
       vinActive = false;
       _vinData = null;
       _calc._loadedFor = null;  // force MSRP/rates re-fetch on the next step 4
+      _calc.tax_rate = 0;
+      _calc._taxFromZip = false;
       goToStep(1);
     }
     window.resetWizard = resetWizard;
@@ -1165,8 +1173,10 @@
       apr: 7.99, term_finance: 60,
       money_factor: 0.00250, residual_pct: 55, term_lease: 36, acq_fee: 895,
       mileage: '10000',
+      tax_rate: 0,                // % — pre-filled from ZIP lookup, editable
       rates: { apr: [], lease: [], mileage_degradation: {} },
       _loadedFor: null,
+      _taxFromZip: false,         // tracks whether tax_rate was set by zip handler so reset clears it
     };
 
     async function _loadRates() {
@@ -1316,28 +1326,36 @@
       const trade = Number(c.trade) || 0;
       const fee = Number(c.dealer_fee) || 0;
       const sellingPrice = msrp - discount;
+      // Sales tax — most states allow trade-in to reduce the taxable
+      // base. Customer cash incentives DON'T usually reduce tax (they
+      // come from the manufacturer, post-tax). This matches the typical
+      // "advertised price + tax" math; user can override the rate to
+      // handle states with different rules (CA / VA / HI / etc).
+      const taxRate = Math.max(Number(c.tax_rate) || 0, 0) / 100;
+      const taxableBase = Math.max(sellingPrice - trade, 0);
+      const tax = taxableBase * taxRate;
       const dt = _wizard.dealType;
       if (dt === 'apr') {
         const rate = (Number(c.apr) || 0) / 100 / 12;
         const term = parseInt(c.term_finance) || 60;
-        const financed = Math.max(sellingPrice - incentive - down - trade + fee, 0);
+        const financed = Math.max(sellingPrice - incentive - down - trade + fee + tax, 0);
         let monthly = 0;
         if (rate > 0 && term > 0 && financed > 0)
           monthly = (financed * rate) / (1 - Math.pow(1 + rate, -term));
-        return { kind: 'apr', monthly, financed, sellingPrice, term };
+        return { kind: 'apr', monthly, financed, sellingPrice, term, tax };
       }
       if (dt === 'lease') {
         const mf = Number(c.money_factor) || 0;
         const resPct = Number(c.residual_pct) || 0;
         const term = parseInt(c.term_lease) || 36;
         const acq = Number(c.acq_fee) || 0;
-        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq, 0);
+        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq + tax, 0);
         const residual = msrp * resPct / 100;
         const monthly = Math.max((adjCap - residual) / term + (adjCap + residual) * mf, 0);
-        return { kind: 'lease', monthly, adjCap, residual, sellingPrice, term, resPct, mf };
+        return { kind: 'lease', monthly, adjCap, residual, sellingPrice, term, resPct, mf, tax };
       }
-      const net = Math.max(sellingPrice - incentive - down - trade + fee, 0);
-      return { kind: 'cash', net, sellingPrice };
+      const net = Math.max(sellingPrice - incentive - down - trade + fee + tax, 0);
+      return { kind: 'cash', net, sellingPrice, tax };
     }
 
     function _calculatorCard(dealType, calc, incentive) {
@@ -1377,6 +1395,7 @@
         lineItems = [
           ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
           ['Incentive Applied', -incentive], ['Down Payment', -c.down], ['Trade-In', -c.trade],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}%)`, calc.tax || 0],
           ['Dealer Fee', c.dealer_fee], ['Amount Financed', calc.financed],
         ];
       } else if (calc.kind === 'lease') {
@@ -1396,6 +1415,7 @@
         lineItems = [
           ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
           ['Incentive Applied', -incentive], ['Down / Cap Reduction', -c.down], ['Trade-In', -c.trade],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}%)`, calc.tax || 0],
           ['Acq Fee + Dealer Fee', c.acq_fee + c.dealer_fee], ['Adj. Cap Cost', calc.adjCap],
           [`Residual (${calc.resPct}%)`, calc.residual],
         ];
@@ -1406,6 +1426,7 @@
         lineItems = [
           ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
           ['Incentive Applied', -incentive], ['Down Payment', -c.down], ['Trade-In', -c.trade],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}%)`, calc.tax || 0],
           ['Dealer Fee', c.dealer_fee], ['Net Purchase Price', calc.net],
         ];
       }
@@ -1416,15 +1437,22 @@
           <span class="mono" style="color:${val < 0 ? '#2C931E' : '#1D1D1D'}">${val < 0 ? '-' : ''}${fmtMoney(Math.abs(val))}</span>
         </div>`).join('');
 
+      const taxHint = c._taxFromZip
+        ? `Auto-filled from ZIP — override if your locality differs`
+        : `State sales tax rate (override if needed)`;
       const dealCommonInputs = `
         <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:10px">
           <div><label class="field-label">MSRP</label><input class="field-input" type="number" value="${c.msrp}" oninput="_setCalc('msrp', this.value)"></div>
           <div><label class="field-label">Dealer Discount</label><input class="field-input" type="number" value="${c.discount}" oninput="_setCalc('discount', this.value)"></div>
           <div><label class="field-label">Dealer Fee</label><input class="field-input" type="number" value="${c.dealer_fee}" oninput="_setCalc('dealer_fee', this.value)"></div>
         </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:14px">
           <div><label class="field-label">Down Payment</label><input class="field-input" type="number" value="${c.down}" oninput="_setCalc('down', this.value)"></div>
           <div><label class="field-label">Trade-In</label><input class="field-input" type="number" value="${c.trade}" oninput="_setCalc('trade', this.value)"></div>
+          <div>
+            <label class="field-label">Sales Tax %</label>
+            <input class="field-input" type="number" step="0.01" value="${Number(c.tax_rate || 0).toFixed(2)}" oninput="_setCalc('tax_rate', this.value)" title="${escapeHtml(taxHint)}">
+          </div>
         </div>`;
 
       return `
@@ -1447,8 +1475,12 @@
     }
 
     window._setCalc = function (key, value) {
-      const num = ['msrp','discount','down','trade','dealer_fee','apr','money_factor','residual_pct','acq_fee'].includes(key);
+      const num = ['msrp','discount','down','trade','dealer_fee','apr','money_factor','residual_pct','acq_fee','tax_rate'].includes(key);
       _calc[key] = num ? (parseFloat(value) || 0) : value;
+      // Once the user touches the tax rate, treat it as a manual override
+      // so the hint label switches and the value isn't clobbered if the
+      // ZIP fires again with a different state.
+      if (key === 'tax_rate') _calc._taxFromZip = false;
       _drawStep4();
     };
 

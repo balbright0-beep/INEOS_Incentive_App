@@ -45,6 +45,41 @@ STATE_NAMES = {
 ALL_STATES = sorted(STATE_NAMES.keys())
 
 
+# State sales tax baseline (general state rate, percent). Used as the
+# default "tax rate" the payment calculator pre-fills from a customer's
+# ZIP. Local additions (county / city), motor-vehicle-specific rates,
+# and trade-in deduction rules vary too much to encode here — the user
+# can override the rate per-deal in the calculator. Source: state DOR
+# general sales tax rates as of 2026; AK/DE/MT/NH/OR have no state
+# sales tax (vehicle excise / registration fees apply but aren't a
+# % of price). Numbers are best-effort defaults, not legal advice.
+STATE_TAX_RATES = {
+    "AL": 4.0,    "AK": 0.0,    "AZ": 5.6,    "AR": 6.5,
+    "CA": 7.25,   "CO": 2.9,    "CT": 6.35,   "DE": 0.0,
+    "DC": 6.0,    "FL": 6.0,    "GA": 4.0,    "HI": 4.0,
+    "ID": 6.0,    "IL": 6.25,   "IN": 7.0,    "IA": 6.0,
+    "KS": 6.5,    "KY": 6.0,    "LA": 4.45,   "ME": 5.5,
+    "MD": 6.0,    "MA": 6.25,   "MI": 6.0,    "MN": 6.875,
+    "MS": 7.0,    "MO": 4.225,  "MT": 0.0,    "NE": 5.5,
+    "NV": 6.85,   "NH": 0.0,    "NJ": 6.625,  "NM": 5.125,
+    "NY": 4.0,    "NC": 4.75,   "ND": 5.0,    "OH": 5.75,
+    "OK": 4.5,    "OR": 0.0,    "PA": 6.0,    "RI": 7.0,
+    "SC": 6.0,    "SD": 4.0,    "TN": 7.0,    "TX": 6.25,
+    "UT": 6.1,    "VT": 6.0,    "VA": 4.15,   "WA": 6.5,
+    "WV": 6.0,    "WI": 5.0,    "WY": 4.0,
+}
+
+
+def state_tax_rate(state: str | None) -> float:
+    """Return the default sales tax rate (percent) for a state. Falls
+    back to 0.0 for unknown states / no-sales-tax states. The calculator
+    UI lets the user override this so locality and motor-vehicle-
+    specific rules can be applied per-deal."""
+    if not state:
+        return 0.0
+    return float(STATE_TAX_RATES.get(state.upper(), 0.0))
+
+
 def zip_to_state(zip_code: str) -> str | None:
     """Convert a ZIP code to a 2-letter state abbreviation."""
     if not zip_code:

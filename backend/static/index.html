@@ -1216,21 +1216,31 @@
     }
 
     // ==================== Incentive Lookup Page ====================
-    function PaymentEstimator({ dealType: initDealType, incentive, initMsrp, modelYear, bodyStyle, trim }) {
+    function PaymentEstimator({ dealType: initDealType, incentive, initMsrp, initTaxRate, modelYear, bodyStyle, trim }) {
       const [open, setOpen] = React.useState(true);
       const [tab, setTab] = React.useState(initDealType || 'cash');
       const [rates, setRates] = React.useState({ apr: [], lease: [], lease_by_trim: {}, mileage_degradation: {} });
       const [mileage, setMileage] = React.useState('10000');
+      // Tracks whether the user has manually edited tax_rate so the
+      // ZIP-driven initTaxRate effect doesn't clobber their override.
+      const taxRateTouchedRef = React.useRef(false);
       const [pf, setPf] = React.useState({
         msrp: initMsrp || '75000', down: '0', trade: '0',
         discount: '0', dealer_fee: '0',
         apr: '5.99', term_finance: '60',
         money_factor: '0.00250', residual_pct: '55', term_lease: '36', acq_fee: '895',
+        tax_rate: initTaxRate != null ? String(initTaxRate) : '0',
       });
       const v = (k) => parseFloat(pf[k]) || 0;
 
       // Sync MSRP
       React.useEffect(() => { if (initMsrp) setPf(f => ({...f, msrp: initMsrp})); }, [initMsrp]);
+
+      // Sync tax rate from ZIP unless the user has overridden it.
+      React.useEffect(() => {
+        if (taxRateTouchedRef.current) return;
+        if (initTaxRate != null) setPf(f => ({...f, tax_rate: String(initTaxRate)}));
+      }, [initTaxRate]);
 
       // Fetch Santander rates for this config
       React.useEffect(() => {
@@ -1290,6 +1300,13 @@
 
       const msrp = v('msrp'), down = v('down'), trade = v('trade'), discount = v('discount'), fee = v('dealer_fee');
       const sellingPrice = msrp - discount;
+      // Sales tax — most states allow trade-in to reduce the taxable
+      // base. Customer cash incentives don't usually reduce tax (they
+      // come from the manufacturer post-tax). User can override the
+      // rate to handle states with different rules.
+      const taxRate = Math.max(v('tax_rate'), 0) / 100;
+      const taxableBase = Math.max(sellingPrice - trade, 0);
+      const tax = taxableBase * taxRate;
 
       // Build APR term options from loaded Santander rates
       const aprTermOpts = rates.apr?.length > 0
@@ -1320,7 +1337,7 @@
       if (tab === 'apr') {
         const rate = v('apr') / 100 / 12;
         const term = parseInt(pf.term_finance) || 60;
-        const financed = Math.max(sellingPrice - incentive - down - trade + fee, 0);
+        const financed = Math.max(sellingPrice - incentive - down - trade + fee + tax, 0);
         if (rate > 0 && term > 0 && financed > 0)
           monthly = (financed * rate) / (1 - Math.pow(1 + rate, -term));
         const trimLabel = rates.apr?.[0]?.trim || trim || '';
@@ -1328,11 +1345,12 @@
         lines = [
           ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
           ['Incentive Applied', -incentive], ['Down Payment', -down], ['Trade-In', -trade],
+          [`Sales Tax (${(v('tax_rate') || 0).toFixed(2)}%)`, tax],
           ['Dealer Fee', fee], ['Amount Financed', financed],
         ];
       } else if (tab === 'lease') {
         const mf = v('money_factor'), resPct = v('residual_pct'), term = parseInt(pf.term_lease) || 36, acq = v('acq_fee');
-        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq, 0);
+        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq + tax, 0);
         const residual = msrp * resPct / 100;
         monthly = Math.max((adjCap - residual) / term + (adjCap + residual) * mf, 0);
         const trimLabel = rates.lease?.[0]?.trim || trim || '';
@@ -1340,15 +1358,18 @@
         lines = [
           ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
           ['Incentive Applied', -incentive], ['Down / Cap Reduction', -down], ['Trade-In', -trade],
+          [`Sales Tax (${(v('tax_rate') || 0).toFixed(2)}%)`, tax],
           ['Acq Fee + Dealer Fee', acq + fee], ['Adj. Cap Cost', adjCap],
           [`Residual (${resPct}%)`, residual],
         ];
       } else {
         label = 'Cash Purchase';
+        const net = Math.max(sellingPrice - incentive - down - trade + fee + tax, 0);
         lines = [
           ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
           ['Incentive Applied', -incentive], ['Down Payment', -down], ['Trade-In', -trade],
-          ['Dealer Fee', fee], ['Net Purchase Price', sellingPrice - incentive - down - trade + fee],
+          [`Sales Tax (${(v('tax_rate') || 0).toFixed(2)}%)`, tax],
+          ['Dealer Fee', fee], ['Net Purchase Price', net],
         ];
       }
 
@@ -1390,8 +1411,8 @@
               ) : (
                 <div className="text-center mb-4 py-4 bg-mushroom-light rounded-lg">
                   <p className="text-xs uppercase tracking-wider text-silver-dust mb-1">Net Purchase Price</p>
-                  <p className="text-4xl font-bold text-onyx">${Math.max(sellingPrice - incentive - down - trade + fee, 0).toLocaleString()}</p>
-                  <p className="text-xs text-silver-dust mt-1">After discount + incentives</p>
+                  <p className="text-4xl font-bold text-onyx">${Math.round(Math.max(sellingPrice - incentive - down - trade + fee + tax, 0)).toLocaleString()}</p>
+                  <p className="text-xs text-silver-dust mt-1">After discount + incentives + tax</p>
                 </div>
               )}
 
@@ -1437,6 +1458,12 @@
                 <Input label="Down Payment ($)" type="number" value={pf.down} onChange={e => setPf(f => ({...f, down: e.target.value}))} />
                 <Input label="Trade-In Value ($)" type="number" value={pf.trade} onChange={e => setPf(f => ({...f, trade: e.target.value}))} />
                 <Input label="Dealer Fee ($)" type="number" value={pf.dealer_fee} onChange={e => setPf(f => ({...f, dealer_fee: e.target.value}))} placeholder="0" />
+                <Input
+                  label={`Sales Tax Rate (%)${initTaxRate > 0 && !taxRateTouchedRef.current ? ' — from ZIP' : ''}`}
+                  type="number" step="0.01" value={pf.tax_rate}
+                  onChange={e => { taxRateTouchedRef.current = true; setPf(f => ({...f, tax_rate: e.target.value})); }}
+                  placeholder="0.00"
+                />
               </div>
 
               {/* Lease comparison by trim (if available) */}
@@ -1496,6 +1523,10 @@
       // VIN's actual MSRP wins when a real unit is in inventory.
       const [catalogMsrp, setCatalogMsrp] = React.useState(null);
       const [stateName, setStateName] = React.useState('');
+      // Tax rate auto-populated from the ZIP lookup. Default 0 means
+      // PaymentEstimator pre-fill stays neutral until ZIP resolves.
+      // PaymentEstimator can still be edited manually.
+      const [taxRate, setTaxRate] = React.useState(0);
       const [preview, setPreview] = React.useState(null);
       const [previewLoading, setPreviewLoading] = React.useState(false);
       const [dealType, setDealType] = React.useState(null);
@@ -1551,6 +1582,7 @@
         setVinData(null);
         setCatalogMsrp(null);
         setStateName('');
+        setTaxRate(0);
         setPreview(null);
         setDealType(null);
         setLookup(null);
@@ -1768,10 +1800,11 @@
                     API.get(`/lookup/zip/${v}`).then(r => {
                       updateVehicle('state', r.state);
                       setStateName(r.state_name || '');
+                      if (typeof r.tax_rate === 'number') setTaxRate(r.tax_rate);
                     }).catch(() => {});
                   }
                 }} placeholder="e.g., 92101" className="w-32" />
-                {vehicle.state && <p className="text-xs text-success mt-1">Resolved: {vehicle.state}{stateName ? ` (${stateName})` : ''}</p>}
+                {vehicle.state && <p className="text-xs text-success mt-1">Resolved: {vehicle.state}{stateName ? ` (${stateName})` : ''}{taxRate > 0 ? ` · ${taxRate}% sales tax` : ''}</p>}
 
                 <Button type="submit" disabled={previewLoading} className="w-full mt-6">
                   {previewLoading ? 'Loading…' : 'Continue →'}
@@ -2002,6 +2035,7 @@
                 dealType={dealType}
                 incentive={selection?.total || 0}
                 initMsrp={vinData?.msrp ? String(Math.round(vinData.msrp)) : (catalogMsrp ? String(catalogMsrp) : '75000')}
+                initTaxRate={taxRate}
                 modelYear={vehicle.model_year}
                 bodyStyle={vehicle.body_style}
                 trim={vehicle.trim || (vinData?.trim)}
