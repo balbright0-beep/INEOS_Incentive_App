@@ -7,6 +7,7 @@ from app.schemas.lookup import (
 )
 from app.services.lookup import lookup_incentive
 from app.services.geo import zip_to_state, state_name, ALL_STATES, STATE_NAMES
+from app.services import platform_client
 from app.auth.security import get_current_user
 from app.models.user import User
 from app.models.vehicle import Vehicle
@@ -122,11 +123,24 @@ def public_preview_deal_types(req: PreviewRequest, db: Session = Depends(get_db)
 
 @router.get("/vin/{vin}")
 def vin_lookup(vin: str, db: Session = Depends(get_db)):
-    """Look up a VIN from the internal vehicle inventory (Master File).
-    Falls back to basic VIN pattern decoding if not found in database."""
+    """Resolve a VIN to its vehicle data, in this priority order:
+
+    1. Americas Platform hub (canonical Master File source).
+    2. Local Vehicle table (legacy fallback for installs that still
+       upload Master File directly to the Incentive App).
+    3. VIN-pattern decode (only model year + body style — no MSRP).
+
+    The hub is the source of truth; the local table stays as a
+    fallback so deployments without PLATFORM_BASE_URL set still work.
+    """
     vin = vin.strip().upper()
 
-    # Search internal database first
+    # 1. Hub lookup — short-circuits as soon as it returns data
+    hub = platform_client.fetch_vehicle_by_vin(vin)
+    if hub:
+        return platform_client.map_platform_to_incentive_shape(hub)
+
+    # 2. Local Vehicle table fallback
     vehicle = db.query(Vehicle).filter(Vehicle.vin == vin).first()
     if vehicle:
         # Normalize trim to match product catalog / dropdown values
@@ -155,13 +169,14 @@ def vin_lookup(vin: str, db: Session = Depends(get_db)):
             "source": "inventory",
         }
 
-    # Fallback: basic VIN pattern decode (INEOS VINs)
-    # INEOS VINs start with SC6 (Station Wagon) or SH7 (Quartermaster)
+    # 3. VIN-pattern decode fallback (no MSRP available — model year +
+    #    body style only). INEOS VINs start with SC6 (Station Wagon) or
+    #    SH7 (Quartermaster). 10th char is model year: R=2024, S=2025,
+    #    T=2026, V=2027.
     body_style = "station_wagon"
     if vin.startswith("SH7"):
         body_style = "quartermaster"
 
-    # 10th character is model year: S=2025, T=2026, V=2027
     my_char = vin[9] if len(vin) >= 10 else ""
     my_map = {"S": "MY25", "T": "MY26", "V": "MY27", "R": "MY24"}
     model_year = my_map.get(my_char.upper())

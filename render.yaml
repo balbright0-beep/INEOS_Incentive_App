@@ -22,3 +22,13 @@ services:
         value: /tmp/output
       - key: ADMIN_DEFAULT_PASSWORD
         value: admin123
+      # Hub integration — VIN lookups proxy to the Americas Platform's
+      # vehicle table (the canonical Master File source). Both env vars
+      # must be set for the hub call to fire; otherwise vin_lookup
+      # falls back to the local Vehicle table and then VIN-pattern
+      # decode. PLATFORM_SERVICE_KEY must match the value set on the
+      # Americas Platform service.
+      - key: PLATFORM_BASE_URL
+        value: https://ineos-americas-platform.onrender.com
+      - key: PLATFORM_SERVICE_KEY
+        sync: false
