@@ -6,7 +6,10 @@ from app.schemas.lookup import (
     PreviewRequest, PreviewResponse, DealTypePreview,
 )
 from app.services.lookup import lookup_incentive
-from app.services.geo import zip_to_state, state_name, state_tax_rate, ALL_STATES, STATE_NAMES
+from app.services.geo import (
+    zip_to_state, state_name, state_tax_rate, zip_to_combined_tax_rate,
+    ALL_STATES, STATE_NAMES,
+)
 from app.services import platform_client
 from app.auth.security import get_current_user
 from app.models.user import User
@@ -238,18 +241,28 @@ def vin_lookup(vin: str, db: Session = Depends(get_db)):
 
 @router.get("/zip/{zip_code}")
 def zip_lookup(zip_code: str):
-    """Resolve a ZIP code to a state abbreviation, name, and default
-    sales tax rate. The tax_rate is the state baseline (percent) — the
-    calculator pre-fills this and lets the user override it for local
-    additions or motor-vehicle-specific rates."""
+    """Resolve a ZIP code to a state abbreviation, name, and combined
+    sales tax rate. tax_rate is the ZIP-precise rate (state + county +
+    city + special districts) when the ZIP is in the bundled dataset;
+    otherwise falls back to the state baseline. tax_rate_source signals
+    which one was used — useful for the UI to label "ZIP-precise" vs
+    "state estimate" so the user knows when to override."""
     state = zip_to_state(zip_code)
     if not state:
         raise HTTPException(status_code=404, detail="Could not resolve ZIP code to a state")
+    zip_rate = zip_to_combined_tax_rate(zip_code)
+    if zip_rate is not None:
+        tax_rate = zip_rate
+        source = "zip"
+    else:
+        tax_rate = state_tax_rate(state)
+        source = "state"
     return {
         "zip_code": zip_code,
         "state": state,
         "state_name": state_name(state),
-        "tax_rate": state_tax_rate(state),
+        "tax_rate": tax_rate,
+        "tax_rate_source": source,
     }
 
 

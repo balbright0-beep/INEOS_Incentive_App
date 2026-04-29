@@ -1,5 +1,8 @@
 """ZIP code to state mapping for geographic program eligibility."""
 
+import csv
+import os
+
 # ZIP code prefix ranges to state mapping
 # Each entry is (start_prefix, end_prefix, state_abbrev)
 ZIP_RANGES = [
@@ -72,12 +75,68 @@ STATE_TAX_RATES = {
 
 def state_tax_rate(state: str | None) -> float:
     """Return the default sales tax rate (percent) for a state. Falls
-    back to 0.0 for unknown states / no-sales-tax states. The calculator
-    UI lets the user override this so locality and motor-vehicle-
-    specific rules can be applied per-deal."""
+    back to 0.0 for unknown states / no-sales-tax states. Used as a
+    fallback when zip_to_combined_tax_rate doesn't have an entry for
+    the customer's ZIP. The calculator UI lets the user override
+    either source so locality and motor-vehicle-specific rules can be
+    applied per-deal."""
     if not state:
         return 0.0
     return float(STATE_TAX_RATES.get(state.upper(), 0.0))
+
+
+# ZIP-to-combined-rate cache. The bundled CSV is read once on first
+# call and held in memory (~1.1 MB / 39K rows) so subsequent lookups
+# are O(1) dict access. None means "not loaded yet"; an empty dict
+# means "load attempted but the file was missing or unreadable" so we
+# don't repeatedly retry. See backend/data/README.md for source +
+# refresh instructions.
+_ZIP_TAX_CACHE: dict[str, float] | None = None
+
+
+def _zip_tax_csv_path() -> str:
+    here = os.path.dirname(__file__)
+    # geo.py lives at backend/app/services/geo.py; the data lives at
+    # backend/data/zip_tax_rates.csv (three levels up + back down).
+    return os.path.normpath(os.path.join(here, "..", "..", "data", "zip_tax_rates.csv"))
+
+
+def _load_zip_tax_rates() -> dict[str, float]:
+    global _ZIP_TAX_CACHE
+    if _ZIP_TAX_CACHE is not None:
+        return _ZIP_TAX_CACHE
+    out: dict[str, float] = {}
+    path = _zip_tax_csv_path()
+    try:
+        with open(path, "r", encoding="utf-8", newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                zip_code = (row.get("Postcode / ZIP") or "").strip()
+                rate_str = (row.get("Rate %") or "").strip()
+                if not zip_code or not rate_str:
+                    continue
+                try:
+                    out[zip_code] = float(rate_str)
+                except ValueError:
+                    continue
+    except FileNotFoundError:
+        pass
+    _ZIP_TAX_CACHE = out
+    return out
+
+
+def zip_to_combined_tax_rate(zip_code: str | None) -> float | None:
+    """Return the ZIP-precise combined sales tax rate (percent) covering
+    state + county + city + special districts, or None when the ZIP isn't
+    in the bundled dataset. Callers should fall back to state_tax_rate
+    on None so we still return a reasonable estimate for ZIPs the
+    dataset misses."""
+    if not zip_code:
+        return None
+    clean = zip_code.strip().replace("-", "")[:5]
+    if len(clean) != 5 or not clean.isdigit():
+        return None
+    return _load_zip_tax_rates().get(clean)
 
 
 def zip_to_state(zip_code: str) -> str | None:

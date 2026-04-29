@@ -1525,8 +1525,11 @@
       const [stateName, setStateName] = React.useState('');
       // Tax rate auto-populated from the ZIP lookup. Default 0 means
       // PaymentEstimator pre-fill stays neutral until ZIP resolves.
-      // PaymentEstimator can still be edited manually.
+      // PaymentEstimator can still be edited manually. taxRateSource is
+      // 'zip' when the bundled ZIP-precise dataset had a hit, 'state'
+      // when we fell back to the state baseline — used to label the UI.
       const [taxRate, setTaxRate] = React.useState(0);
+      const [taxRateSource, setTaxRateSource] = React.useState('state');
       const [preview, setPreview] = React.useState(null);
       const [previewLoading, setPreviewLoading] = React.useState(false);
       const [dealType, setDealType] = React.useState(null);
@@ -1583,6 +1586,7 @@
         setCatalogMsrp(null);
         setStateName('');
         setTaxRate(0);
+        setTaxRateSource('state');
         setPreview(null);
         setDealType(null);
         setLookup(null);
@@ -1801,10 +1805,11 @@
                       updateVehicle('state', r.state);
                       setStateName(r.state_name || '');
                       if (typeof r.tax_rate === 'number') setTaxRate(r.tax_rate);
+                      if (r.tax_rate_source) setTaxRateSource(r.tax_rate_source);
                     }).catch(() => {});
                   }
                 }} placeholder="e.g., 92101" className="w-32" />
-                {vehicle.state && <p className="text-xs text-success mt-1">Resolved: {vehicle.state}{stateName ? ` (${stateName})` : ''}{taxRate > 0 ? ` · ${taxRate}% sales tax` : ''}</p>}
+                {vehicle.state && <p className="text-xs text-success mt-1">Resolved: {vehicle.state}{stateName ? ` (${stateName})` : ''}{taxRate > 0 ? ` · ${taxRate}% sales tax (${taxRateSource === 'zip' ? 'ZIP' : 'state estimate'})` : ''}</p>}
 
                 <Button type="submit" disabled={previewLoading} className="w-full mt-6">
                   {previewLoading ? 'Loading…' : 'Continue →'}

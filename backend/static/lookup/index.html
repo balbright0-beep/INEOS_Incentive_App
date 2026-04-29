@@ -761,13 +761,15 @@
           .then(data => {
             if (data.state) {
               $('state').value = data.state;
-              const taxLabel = data.tax_rate ? ` · ${data.tax_rate}% tax` : '';
+              const sourceLabel = data.tax_rate_source === 'zip' ? ' combined' : ' state estimate';
+              const taxLabel = data.tax_rate ? ` · ${data.tax_rate}% tax (${data.tax_rate_source === 'zip' ? 'ZIP' : 'state'})` : '';
               $('zip-status').textContent = `Resolved: ${data.state}${data.state_name ? ' (' + data.state_name + ')' : ''}${taxLabel}`;
             }
             // Cache the ZIP-derived tax rate so step 4's calculator can default to it
             if (typeof data.tax_rate === 'number') {
               _calc.tax_rate = data.tax_rate;
               _calc._taxFromZip = true;
+              _calc._taxRateSource = data.tax_rate_source || 'state';
             }
           })
           .catch(() => { $('zip-status').textContent = ''; });
