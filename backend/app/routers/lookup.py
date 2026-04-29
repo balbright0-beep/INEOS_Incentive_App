@@ -121,6 +121,44 @@ def public_preview_deal_types(req: PreviewRequest, db: Session = Depends(get_db)
     return _preview(db, req, public_only=True)
 
 
+@router.get("/debug/hub")
+def debug_hub(vin: str = "SC6GM1CA6SF026634"):
+    """Diagnostic endpoint — reports whether platform_client is configured
+    and what the Platform returns for a given VIN. Never echoes the
+    service key value. Safe to leave enabled in prod (no secrets, no
+    DB writes, no enumeration risk beyond a single-VIN check)."""
+    import httpx
+    base = platform_client._base_url()
+    key_set = bool(platform_client._service_key())
+    diag = {
+        "is_configured": platform_client.is_configured(),
+        "platform_base_url": base or None,
+        "platform_service_key_set": key_set,
+        "vin_tested": vin,
+    }
+    if not platform_client.is_configured():
+        diag["result"] = "skipped — env vars missing"
+        return diag
+    try:
+        r = httpx.get(
+            f"{base}/api/data/vehicle-by-vin/{vin.strip().upper()}",
+            headers={"X-Service-Key": platform_client._service_key()},
+            timeout=5.0,
+        )
+        diag["http_status"] = r.status_code
+        body = r.text
+        diag["response_body_preview"] = body[:500] if body else None
+        if r.status_code == 200:
+            try:
+                diag["mapped"] = platform_client.map_platform_to_incentive_shape(r.json())
+            except Exception as e:
+                diag["mapping_error"] = repr(e)
+        return diag
+    except Exception as e:
+        diag["network_error"] = repr(e)
+        return diag
+
+
 @router.get("/vin/{vin}")
 def vin_lookup(vin: str, db: Session = Depends(get_db)):
     """Resolve a VIN to its vehicle data, in this priority order:
