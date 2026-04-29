@@ -1064,20 +1064,93 @@
         </div>` : ''}`;
     }
 
-    window._toggleProgram = function (id, checked) {
+    // Walk the current selection to figure out which loyalty/conquest
+    // flags the SAP code needs. The campaign code is keyed by these
+    // flags — toggling on a loyalty-type program means we need the
+    // USCSWSL variant, not USCSWS. _maybeRefetchOnFlagChange compares
+    // the implied flags to the current lookup and re-issues /api/lookup
+    // with the right flags so the code chip + layers swap to the
+    // correct variant. The user's selection is preserved across the
+    // re-fetch (by program_id) so they don't lose toggles.
+    function _flagsFromSelection() {
+      const r = _wizard.lookup;
+      if (!r) return { loyalty: false, conquest: false };
+      let loyalty = false, conquest = false;
+      for (const p of (r.eligible_programs || [])) {
+        if (!_selectedProgramIds.has(p.program_id)) continue;
+        if (p.program_type === 'loyalty') loyalty = true;
+        else if (p.program_type === 'conquest') conquest = true;
+      }
+      return { loyalty, conquest };
+    }
+
+    let _refetchInFlight = false;
+    async function _maybeRefetchOnFlagChange() {
+      const r = _wizard.lookup;
+      if (!r || _refetchInFlight) return false;
+      const want = _flagsFromSelection();
+      if (!!r.loyalty === want.loyalty && !!r.conquest === want.conquest) return false;
+      _refetchInFlight = true;
+      const body = {
+        ...(_wizard.vehicle || {}),
+        finance_type: _wizard.dealType,
+        conquest: want.conquest,
+        conquest_brand: null,
+        loyalty: want.loyalty,
+        loyalty_vin: null,
+      };
+      try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (LOOKUP_ENDPOINT === '/api/lookup' && ADMIN_TOKEN) headers['Authorization'] = 'Bearer ' + ADMIN_TOKEN;
+        const resp = await fetch(LOOKUP_ENDPOINT, { method: 'POST', headers, body: JSON.stringify(body) });
+        if (!resp.ok) return false;
+        const next = await resp.json();
+        // Preserve user's selection across the variant swap. Programs
+        // that don't exist in the new variant (e.g., a program filtered
+        // out) drop off naturally because _selectedProgramIds gets
+        // re-narrowed to the new program_id list.
+        const nextIds = new Set((next.eligible_programs || []).map(p => p.program_id));
+        const merged = new Set();
+        for (const id of _selectedProgramIds) if (nextIds.has(id)) merged.add(id);
+        // Pull in any auto-selected programs from the new variant that
+        // the user hadn't explicitly opted out of (i.e., programs that
+        // weren't in the old variant at all).
+        const oldIds = new Set((r.eligible_programs || []).map(p => p.program_id));
+        for (const p of (next.eligible_programs || [])) {
+          if (p.auto_selected && !oldIds.has(p.program_id)) merged.add(p.program_id);
+        }
+        _wizard.lookup = next;
+        _selectedProgramIds = merged;
+        return true;
+      } catch {
+        return false;
+      } finally {
+        _refetchInFlight = false;
+      }
+    }
+
+    window._toggleProgram = async function (id, checked) {
       if (checked) _selectedProgramIds.add(id);
       else _selectedProgramIds.delete(id);
+      // Try the variant swap first so the code chip is correct on the
+      // first paint. Falls through to a normal re-render either way.
+      const swapped = await _maybeRefetchOnFlagChange();
       _renderSelection();
+      if (_wizard.step === 4 || swapped) _drawStep4 && _drawStep4();
     };
-    window._chooserSelectAuto = function () {
+    window._chooserSelectAuto = async function () {
       const r = _wizard.lookup;
       if (!r) return;
       _selectedProgramIds = new Set((r.eligible_programs || []).filter(p => p.auto_selected).map(p => p.program_id));
+      const swapped = await _maybeRefetchOnFlagChange();
       _renderSelection();
+      if (_wizard.step === 4 || swapped) _drawStep4 && _drawStep4();
     };
-    window._chooserClearAll = function () {
+    window._chooserClearAll = async function () {
       _selectedProgramIds = new Set();
+      const swapped = await _maybeRefetchOnFlagChange();
       _renderSelection();
+      if (_wizard.step === 4 || swapped) _drawStep4 && _drawStep4();
     };
 
     // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Step 4: Result + Payment Calculator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500

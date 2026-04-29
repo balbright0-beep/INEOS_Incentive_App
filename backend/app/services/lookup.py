@@ -189,12 +189,20 @@ def _build_eligible_programs(db: Session, deal_type: str, req, customer_state, l
     for prog in active_programs:
         if not is_program_applicable(deal_type, prog.program_type, stacking):
             continue
-        if not program_matches_config(prog, config):
-            continue
-        # Loyalty/conquest type-gating mirrors the matrix builder.
-        if prog.program_type == "loyalty" and not config["loyalty"]:
-            continue
-        if prog.program_type == "conquest" and not config["conquest"]:
+        # Loyalty/conquest programs need to appear in the chooser as
+        # opt-in alternatives even when the corresponding flag is false
+        # — otherwise the user has no way to reach the loyalty/conquest
+        # variant of the campaign code (USCSWSL, USCSWSC, USCSWSLC).
+        # We re-evaluate the program's other rules with the flag forced
+        # on so it passes its own rules; the actual flag the lookup is
+        # called with comes back to false in the response, and the
+        # frontend re-issues the lookup with the right flag when the
+        # user opts the program in.
+        is_loyalty_or_conquest = prog.program_type in ("loyalty", "conquest")
+        eval_config = dict(config)
+        if is_loyalty_or_conquest:
+            eval_config[prog.program_type] = True
+        if not program_matches_config(prog, eval_config):
             continue
         # State-restriction filter — the program is removed entirely
         # from the chooser (rather than shown disabled) because it
