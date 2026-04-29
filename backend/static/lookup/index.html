@@ -1217,8 +1217,12 @@
       const v = _wizard.vehicle;
       if (!v) return;
       const trim = v.trim ? `&trim=${encodeURIComponent(v.trim)}` : '';
+      // Pass the resolved state so Santander state-specific rate sheets
+      // (TX, CA, MI, etc.) override the national sheet for terms they cover.
+      // The backend falls back to national for terms the state file is silent on.
+      const stateParam = v.state ? `&state=${encodeURIComponent(v.state)}` : '';
       try {
-        const r = await fetch(`/api/lookup/rates?model_year=${encodeURIComponent(v.model_year)}&body_style=${encodeURIComponent(v.body_style)}&tier=1${trim}`);
+        const r = await fetch(`/api/lookup/rates?model_year=${encodeURIComponent(v.model_year)}&body_style=${encodeURIComponent(v.body_style)}&tier=1${trim}${stateParam}`);
         if (!r.ok) return;
         const data = await r.json();
         _calc.rates = data;
@@ -1268,7 +1272,10 @@
         return;
       }
       $('step4-content').innerHTML = '<div class="panel-loading">Loading payment estimate\u2026</div>';
-      const cacheKey = (_wizard.dealType || '') + '|' + (_wizard.vehicle?.trim || '');
+      // Cache key includes state — different states get different
+      // Santander rate sheets, so a TX user's cached MY26 SW rates
+      // shouldn't be reused for a CA user's wizard re-entry.
+      const cacheKey = (_wizard.dealType || '') + '|' + (_wizard.vehicle?.trim || '') + '|' + (_wizard.vehicle?.state || '');
       if (_calc._loadedFor !== cacheKey) {
         await Promise.all([_loadRates(), _loadMsrp()]);
         _calc._loadedFor = cacheKey;
@@ -1430,11 +1437,21 @@
 
       const opt = (opts, sel) => opts.map(o => `<option value="${escapeHtml(o.value)}"${String(sel) === o.value ? ' selected' : ''}>${escapeHtml(o.label)}</option>`).join('');
 
+      // State-subvented rate label — appended to the APR / lease hero
+      // when the loaded rates pulled from the State_INEOS_*Input file
+      // for this customer's state. Lets the user see when a state
+      // promo is in play vs. national fallback.
+      const stateBadge = (kind) => {
+        const r = c.rates || {};
+        const isState = (kind === 'apr' && r.has_state_apr) || (kind === 'lease' && r.has_state_lease);
+        if (!isState || !r.state) return '';
+        return ` <span style="display:inline-block;background:#1D3F7A;color:#fff;font-size:9px;font-family:'JetBrains Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;padding:1px 6px;border-radius:3px;vertical-align:1px">${escapeHtml(r.state)} subvented</span>`;
+      };
       let hero, dealInputs = '', lineItems;
       if (calc.kind === 'apr') {
         hero = `<p class="eyebrow" style="margin:0 0 4px">Estimated Monthly Payment</p>
                 <p style="font-size:38px;font-weight:700;color:#1D1D1D;margin:0">${fmtMoney(Math.round(calc.monthly))}<span style="font-size:18px;color:#9F9F9F;font-weight:400">/mo</span></p>
-                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">${calc.term}mo @ ${c.apr}% Santander APR</p>`;
+                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">${calc.term}mo @ ${c.apr}% Santander APR${stateBadge('apr')}</p>`;
         dealInputs = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
             <div><label class="field-label">Term & Rate</label><select class="field-select" onchange="_setCalc('term_finance', this.value); _onTermChangeApr()">${opt(aprTermOpts, c.term_finance)}</select></div>
@@ -1449,7 +1466,7 @@
       } else if (calc.kind === 'lease') {
         hero = `<p class="eyebrow" style="margin:0 0 4px">Estimated Monthly Payment</p>
                 <p style="font-size:38px;font-weight:700;color:#1D1D1D;margin:0">${fmtMoney(Math.round(calc.monthly))}<span style="font-size:18px;color:#9F9F9F;font-weight:400">/mo</span></p>
-                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">${calc.term}mo Lease | MF ${c.money_factor} (${(calc.mf * 2400).toFixed(2)}% APR) | ${calc.resPct}% res @ ${Number(c.mileage).toLocaleString()} mi/yr</p>`;
+                <p style="font-size:11.5px;color:#606060;margin:4px 0 0">${calc.term}mo Lease | MF ${c.money_factor} (${(calc.mf * 2400).toFixed(2)}% APR) | ${calc.resPct}% res @ ${Number(c.mileage).toLocaleString()} mi/yr${stateBadge('lease')}</p>`;
         dealInputs = `
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px">
             <div><label class="field-label">Term & Residual</label><select class="field-select" onchange="_setCalc('term_lease', this.value); _onLeaseTermChange()">${opt(leaseTermOpts, c.term_lease)}</select></div>

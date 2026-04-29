@@ -1220,7 +1220,7 @@
     }
 
     // ==================== Incentive Lookup Page ====================
-    function PaymentEstimator({ dealType: initDealType, incentive, initMsrp, initTaxRate, leaseTaxBasis, modelYear, bodyStyle, trim }) {
+    function PaymentEstimator({ dealType: initDealType, incentive, initMsrp, initTaxRate, leaseTaxBasis, state, modelYear, bodyStyle, trim }) {
       const [open, setOpen] = React.useState(true);
       const [tab, setTab] = React.useState(initDealType || 'cash');
       const [rates, setRates] = React.useState({ apr: [], lease: [], lease_by_trim: {}, mileage_degradation: {} });
@@ -1251,7 +1251,10 @@
         const my = modelYear || 'MY26';
         const bs = bodyStyle || 'station_wagon';
         const trimParam = trim ? `&trim=${encodeURIComponent(trim)}` : '';
-        API.get(`/lookup/rates?model_year=${my}&body_style=${bs}&tier=1${trimParam}`)
+        // State pulls in state-specific Santander rate sheets (TX, CA, MI, ...)
+        // for any (term, tier) combo where the state file has a row.
+        const stateParam = state ? `&state=${encodeURIComponent(state)}` : '';
+        API.get(`/lookup/rates?model_year=${my}&body_style=${bs}&tier=1${trimParam}${stateParam}`)
           .then(data => {
             setRates(data);
             // Auto-set first available APR rate
@@ -1276,7 +1279,7 @@
             }
           })
           .catch(() => {});
-      }, [modelYear, bodyStyle, trim]);
+      }, [modelYear, bodyStyle, trim, state]);
 
       // Auto-update APR when term changes — pull from loaded rates
       React.useEffect(() => {
@@ -1421,6 +1424,12 @@
               {hasRates && (
                 <div className="flex items-center gap-2 mb-4 px-3 py-2 bg-blue-50 border border-blue-200 rounded text-xs text-blue-700">
                   <span className="font-bold">Santander</span> rates auto-loaded for {modelYear || 'MY26'} {(bodyStyle || '').replace('_',' ').replace(/\b\w/g, c => c.toUpperCase())}{trim ? ` ${trim}` : ''}
+                  {(tab === 'apr' && rates.has_state_apr) || (tab === 'lease' && rates.has_state_lease)
+                    ? <span className="ml-1 px-1.5 py-0.5 rounded bg-blue-700 text-white text-[10px] font-mono uppercase tracking-wider">{rates.state} subvented</span>
+                    : rates.state
+                      ? <span className="ml-1 text-blue-500">· national rate (no state-specific subvention for {rates.state})</span>
+                      : null
+                  }
                 </div>
               )}
 
@@ -2076,6 +2085,7 @@
                 initMsrp={vinData?.msrp ? String(Math.round(vinData.msrp)) : (catalogMsrp ? String(catalogMsrp) : '75000')}
                 initTaxRate={taxRate}
                 leaseTaxBasis={leaseTaxBasis}
+                state={vehicle.state}
                 modelYear={vehicle.model_year}
                 bodyStyle={vehicle.body_style}
                 trim={vehicle.trim || (vinData?.trim)}

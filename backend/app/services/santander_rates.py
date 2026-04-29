@@ -231,10 +231,78 @@ def load_lease_rates(base_dir: str) -> list[dict]:
     return national + state
 
 
+# Region values used by the input files. Numeric '101' = national
+# rate sheet; everything else is a 2-letter state code.
+NATIONAL_REGION = "101"
+
+
+def _filter_for_state(rows: list[dict], state: str | None) -> list[dict]:
+    """Return only rows that apply to the customer's state. State rows
+    win when present for that state — and we still keep national rows
+    so the per-term picker can fall back when the state file is silent
+    on a particular (term, tier) combo."""
+    if not state:
+        return [r for r in rows if r.get("region") == NATIONAL_REGION]
+    state_upper = state.upper()
+    return [r for r in rows if r.get("region") in (NATIONAL_REGION, state_upper)]
+
+
+def _is_state_row(r: dict, state: str | None) -> bool:
+    return bool(state and r.get("region") == state.upper())
+
+
+def _pick_per_term_apr(matching: list[dict], state: str | None) -> dict[int, dict]:
+    """For each term, pick a state row over a national row. Among rows
+    with the same region, prefer the lowest APR — same tiebreak as
+    before, just within-region instead of across all regions."""
+    by_term: dict[int, dict] = {}
+    for r in matching:
+        t = r["term"]
+        cur = by_term.get(t)
+        if cur is None:
+            by_term[t] = r
+            continue
+        new_is_state = _is_state_row(r, state)
+        cur_is_state = _is_state_row(cur, state)
+        if new_is_state and not cur_is_state:
+            by_term[t] = r
+        elif new_is_state == cur_is_state and r["apr"] < cur["apr"]:
+            by_term[t] = r
+    return by_term
+
+
+def _pick_per_term_lease(matching: list[dict], state: str | None) -> dict[int, dict]:
+    """Same shape as _pick_per_term_apr but tiebreak on money_factor
+    (lower MF = better deal). None money_factors lose to numeric ones."""
+    def mf_better(new: dict, cur: dict) -> bool:
+        if new["money_factor"] is None:
+            return False
+        if cur["money_factor"] is None:
+            return True
+        return new["money_factor"] < cur["money_factor"]
+
+    by_term: dict[int, dict] = {}
+    for r in matching:
+        t = r["term"]
+        cur = by_term.get(t)
+        if cur is None:
+            by_term[t] = r
+            continue
+        new_is_state = _is_state_row(r, state)
+        cur_is_state = _is_state_row(cur, state)
+        if new_is_state and not cur_is_state:
+            by_term[t] = r
+        elif new_is_state == cur_is_state and mf_better(r, cur):
+            by_term[t] = r
+    return by_term
+
+
 def get_apr_for_config(base_dir: str, model_year: str, body_style: str,
-                       tier: int = 1, trim: str = None) -> list[dict]:
-    """Get APR rates. If trim specified, filter to that trim. Deduplicated by term."""
-    all_rates = load_apr_rates(base_dir)
+                       tier: int = 1, trim: str = None, state: str = None) -> list[dict]:
+    """Get APR rates. If state is given, prefer state-specific rows
+    over national for each (term, tier); otherwise return national only.
+    Deduplicated by term."""
+    all_rates = _filter_for_state(load_apr_rates(base_dir), state)
     matching = [
         r for r in all_rates
         if r["model_year"] == model_year
@@ -245,19 +313,14 @@ def get_apr_for_config(base_dir: str, model_year: str, body_style: str,
         trim_match = [r for r in matching if r["trim"].lower() == trim.lower()]
         if trim_match:
             matching = trim_match
-
-    by_term = {}
-    for r in matching:
-        t = r["term"]
-        if t not in by_term or r["apr"] < by_term[t]["apr"]:
-            by_term[t] = r
-    return sorted(by_term.values(), key=lambda r: r["term"])
+    return sorted(_pick_per_term_apr(matching, state).values(), key=lambda r: r["term"])
 
 
 def get_lease_for_config(base_dir: str, model_year: str, body_style: str,
-                         tier: int = 1, trim: str = None) -> list[dict]:
-    """Get lease rates. If trim specified, filter to that trim. Deduplicated by term."""
-    all_rates = load_lease_rates(base_dir)
+                         tier: int = 1, trim: str = None, state: str = None) -> list[dict]:
+    """Get lease rates. State preference + per-term dedup, matching
+    get_apr_for_config."""
+    all_rates = _filter_for_state(load_lease_rates(base_dir), state)
     matching = [
         r for r in all_rates
         if r["model_year"] == model_year
@@ -268,42 +331,26 @@ def get_lease_for_config(base_dir: str, model_year: str, body_style: str,
         trim_match = [r for r in matching if r["trim"].lower() == trim.lower()]
         if trim_match:
             matching = trim_match
-
-    by_term = {}
-    for r in matching:
-        t = r["term"]
-        if t not in by_term:
-            by_term[t] = r
-        elif r["money_factor"] is not None and (
-            by_term[t]["money_factor"] is None or r["money_factor"] < by_term[t]["money_factor"]
-        ):
-            by_term[t] = r
-    return sorted(by_term.values(), key=lambda r: r["term"])
+    return sorted(_pick_per_term_lease(matching, state).values(), key=lambda r: r["term"])
 
 
 def get_all_lease_by_trim(base_dir: str, model_year: str, body_style: str,
-                          tier: int = 1) -> dict[str, list[dict]]:
-    """Get lease rates grouped by trim for comparison display."""
-    all_rates = load_lease_rates(base_dir)
+                          tier: int = 1, state: str = None) -> dict[str, list[dict]]:
+    """Get lease rates grouped by trim for comparison display.
+    State-aware in the same way as get_lease_for_config."""
+    all_rates = _filter_for_state(load_lease_rates(base_dir), state)
     matching = [
         r for r in all_rates
         if r["model_year"] == model_year
         and r["body_style"] == body_style
         and r["tier"] == tier
     ]
-    by_trim = {}
+    by_trim: dict[str, list[dict]] = {}
     for r in matching:
-        trim = r["trim"]
-        by_trim.setdefault(trim, {})
-        t = r["term"]
-        if t not in by_trim[trim]:
-            by_trim[trim][t] = r
-        elif r["money_factor"] is not None and (
-            by_trim[trim][t]["money_factor"] is None or r["money_factor"] < by_trim[trim][t]["money_factor"]
-        ):
-            by_trim[trim][t] = r
+        by_trim.setdefault(r["trim"], []).append(r)
 
     result = {}
-    for trim, terms in by_trim.items():
-        result[trim] = sorted(terms.values(), key=lambda r: r["term"])
+    for trim, rows in by_trim.items():
+        picked = _pick_per_term_lease(rows, state)
+        result[trim] = sorted(picked.values(), key=lambda r: r["term"])
     return result

@@ -300,18 +300,26 @@ def get_rates(
     body_style: str = "station_wagon",
     trim: str = None,
     tier: int = 1,
+    state: str = None,
 ):
     """Get Santander APR and lease rates for a vehicle configuration.
-    Returns rates per term with trim-specific MF and residuals."""
+    Returns rates per term with trim-specific MF and residuals.
+
+    state — when provided (2-letter US state code), state-specific
+    rows from the State_INEOS_*Input.xlsx files take precedence over
+    the national rate sheet for any (term, tier) combo where the
+    state file has a row. National rows still cover terms the state
+    sheet is silent on. Without state, national-only rates are
+    returned (the historical behavior)."""
     import os
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     from app.services.santander_rates import (
         get_apr_for_config, get_lease_for_config, get_all_lease_by_trim
     )
 
-    apr_rates = get_apr_for_config(base_dir, model_year, body_style, tier, trim)
-    lease_rates = get_lease_for_config(base_dir, model_year, body_style, tier, trim)
-    lease_by_trim = get_all_lease_by_trim(base_dir, model_year, body_style, tier)
+    apr_rates = get_apr_for_config(base_dir, model_year, body_style, tier, trim, state)
+    lease_rates = get_lease_for_config(base_dir, model_year, body_style, tier, trim, state)
+    lease_by_trim = get_all_lease_by_trim(base_dir, model_year, body_style, tier, state)
 
     # Get mileage degradation from DB settings (or use defaults)
     from app.database import SessionLocal
@@ -338,11 +346,22 @@ def get_rates(
     finally:
         db.close()
 
+    # Whether the returned rates actually pulled from the state file
+    # (vs. all national fallback). The UI uses this to label the
+    # rate-source line — "Santander rates (TX)" vs "Santander rates
+    # (national)" — so the user knows when state subvention applied.
+    state_used = state.upper() if state else None
+    has_state_apr = any(r.get("region") == state_used for r in apr_rates) if state_used else False
+    has_state_lease = any(r.get("region") == state_used for r in lease_rates) if state_used else False
+
     return {
         "model_year": model_year,
         "body_style": body_style,
         "trim": trim,
         "tier": tier,
+        "state": state_used,
+        "has_state_apr": has_state_apr,
+        "has_state_lease": has_state_lease,
         "apr": apr_rates,
         "lease": lease_rates,
         "lease_by_trim": lease_by_trim,
