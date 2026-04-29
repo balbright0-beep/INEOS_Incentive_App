@@ -771,6 +771,8 @@
               _calc._taxFromZip = true;
               _calc._taxRateSource = data.tax_rate_source || 'state';
             }
+            // Lease tax basis: 'depreciation' (default) or 'full_price' (TX, MD)
+            _calc.lease_tax_basis = data.lease_tax_basis || 'depreciation';
           })
           .catch(() => { $('zip-status').textContent = ''; });
       }, 200);
@@ -825,6 +827,7 @@
       _calc._loadedFor = null;  // force MSRP/rates re-fetch on the next step 4
       _calc.tax_rate = 0;
       _calc._taxFromZip = false;
+      _calc.lease_tax_basis = 'depreciation';
       goToStep(1);
     }
     window.resetWizard = resetWizard;
@@ -1176,6 +1179,7 @@
       money_factor: 0.00250, residual_pct: 55, term_lease: 36, acq_fee: 895,
       mileage: '10000',
       tax_rate: 0,                // % — pre-filled from ZIP lookup, editable
+      lease_tax_basis: 'depreciation',  // 'depreciation' | 'full_price' — set by zip handler from state rules
       rates: { apr: [], lease: [], mileage_degradation: {} },
       _loadedFor: null,
       _taxFromZip: false,         // tracks whether tax_rate was set by zip handler so reset clears it
@@ -1355,11 +1359,18 @@
         const term = parseInt(c.term_lease) || 36;
         const acq = Number(c.acq_fee) || 0;
         const residual = msrp * resPct / 100;
-        const taxBase = Math.max(sellingPrice - residual, 0);
+        // State-specific lease tax basis. Default 'depreciation' (most
+        // states) taxes only (selling - residual). 'full_price' (TX, MD)
+        // taxes the full selling price like a purchase, with trade-in
+        // credit applied since these states allow it.
+        const basis = c.lease_tax_basis || 'depreciation';
+        const taxBase = basis === 'full_price'
+          ? Math.max(sellingPrice - trade, 0)
+          : Math.max(sellingPrice - residual, 0);
         const tax = taxBase * taxRate;
         const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq + tax, 0);
         const monthly = Math.max((adjCap - residual) / term + (adjCap + residual) * mf, 0);
-        return { kind: 'lease', monthly, adjCap, residual, sellingPrice, term, resPct, mf, tax, taxBase };
+        return { kind: 'lease', monthly, adjCap, residual, sellingPrice, term, resPct, mf, tax, taxBase, basis };
       }
       const taxBase = Math.max(sellingPrice - trade, 0);
       const tax = taxBase * taxRate;
@@ -1421,10 +1432,11 @@
             <div><label class="field-label">Residual (%)</label><input class="field-input" type="number" value="${c.residual_pct}" oninput="_setCalc('residual_pct', this.value)"></div>
             <div><label class="field-label">Acq Fee ($)</label><input class="field-input" type="number" value="${c.acq_fee}" oninput="_setCalc('acq_fee', this.value)"></div>
           </div>`;
+        const basisLabel = calc.basis === 'full_price' ? 'full price' : 'depreciation';
         lineItems = [
           ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
           ['Incentive Applied', -incentive], ['Down / Cap Reduction', -c.down], ['Trade-In', -c.trade],
-          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}% on ${fmtMoney(calc.taxBase || 0)} depreciation)`, calc.tax || 0],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}% on ${fmtMoney(calc.taxBase || 0)} ${basisLabel})`, calc.tax || 0],
           ['Acq Fee + Dealer Fee', c.acq_fee + c.dealer_fee], ['Adj. Cap Cost', calc.adjCap],
           [`Residual (${calc.resPct}%)`, calc.residual],
         ];

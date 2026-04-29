@@ -8,6 +8,7 @@ from app.schemas.lookup import (
 from app.services.lookup import lookup_incentive
 from app.services.geo import (
     zip_to_state, state_name, state_tax_rate, zip_to_combined_tax_rate,
+    state_lease_tax_basis,
     ALL_STATES, STATE_NAMES,
 )
 from app.services import platform_client
@@ -263,6 +264,10 @@ def zip_lookup(zip_code: str):
         "state_name": state_name(state),
         "tax_rate": tax_rate,
         "tax_rate_source": source,
+        # 'depreciation' (default) -> tax on (selling - residual)
+        # 'full_price' (TX, MD)    -> tax on full selling price like a purchase
+        # The calculator uses this to pick the right lease tax base.
+        "lease_tax_basis": state_lease_tax_basis(state),
     }
 
 

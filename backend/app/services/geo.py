@@ -85,6 +85,34 @@ def state_tax_rate(state: str | None) -> float:
     return float(STATE_TAX_RATES.get(state.upper(), 0.0))
 
 
+# States where the full sales price (or total of all payments + residual)
+# is the lease tax base, instead of the depreciation portion. Most states
+# use depreciation-basis taxation (either upfront on the cap reduction or
+# amortized into monthly payments — both math out the same). The handful
+# that tax the full contract value are an exception worth encoding so the
+# calculator picks the right basis automatically.
+#
+# Currently encoded:
+#   • TX — Motor vehicle tax 6.25% on total consideration
+#   • MD — Tax on total of all lease payments + residual (≈ full price)
+#
+# Add to this set as more states are confirmed. IL was full-price pre-2015
+# but switched to monthly-payment tax (= depreciation-basis); it stays in
+# the depreciation default. State rules change — re-verify annually.
+LEASE_FULL_PRICE_STATES = {"TX", "MD"}
+
+
+def state_lease_tax_basis(state: str | None) -> str:
+    """Return 'full_price' or 'depreciation' indicating how a state taxes
+    vehicle leases. Used by the calculator to pick the right tax base —
+    full selling price like a purchase, or just the (selling - residual)
+    depreciation portion. Defaults to 'depreciation' since that's the
+    majority rule and the conservative choice."""
+    if state and state.upper() in LEASE_FULL_PRICE_STATES:
+        return "full_price"
+    return "depreciation"
+
+
 # ZIP-to-combined-rate cache. The bundled CSV is read once on first
 # call and held in memory (~1.1 MB / 39K rows) so subsequent lookups
 # are O(1) dict access. None means "not loaded yet"; an empty dict
