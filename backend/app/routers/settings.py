@@ -6,6 +6,7 @@ from app.models.dealer import Dealer, Product
 from app.models.user import User
 from app.models.budget import StackingRule
 from app.models.vehicle import Vehicle
+from app.models.rate_file import SantanderRateFile, SANTANDER_RATE_FILE_KINDS
 from app.schemas.dealer import DealerCreate, DealerResponse, ProductCreate, ProductResponse, UserCreate, UserUpdateRequest
 from app.auth.security import get_current_user, require_admin, hash_password
 from app.services.vehicle_import import import_master_file, import_master_file_from_path
@@ -307,3 +308,132 @@ def vehicle_stats(db: Session = Depends(get_db), user: User = Depends(get_curren
         "by_status": {s: c for s, c in by_status if s},
         "by_model": [{"model_year": m, "body_style": b, "count": c} for m, b, c in by_model if m],
     }
+
+
+# --- Santander rate file uploads -----------------------------------------
+# Admins upload the four monthly Santander input xlsx files via the
+# Settings page; the payment calculator reads the latest of each kind
+# instead of the filesystem-bundled copies the repo originally
+# shipped. One row per kind — uploading replaces the previous file.
+
+_KIND_META = {
+    "apr":         {"label": "National APR",    "expected_sheet": "Retail", "filename_must_contain": "APRInput",   "must_not_contain": "State_"},
+    "lease":       {"label": "National Lease",  "expected_sheet": "Lease",  "filename_must_contain": "LeaseInput", "must_not_contain": "State_"},
+    "state_apr":   {"label": "State APR",       "expected_sheet": "Retail", "filename_must_contain": "APRInput",   "must_contain": "State_"},
+    "state_lease": {"label": "State Lease",     "expected_sheet": "Lease",  "filename_must_contain": "LeaseInput", "must_contain": "State_"},
+}
+
+
+def _validate_rate_file(kind: str, filename: str, contents: bytes):
+    """Reject obviously-wrong uploads — wrong kind for this slot or a
+    file the parser can't open. The filename heuristics catch the
+    common 'wrong slot' mistake (uploading the State file under the
+    National card or vice versa); the openpyxl probe catches files
+    that aren't actually xlsx."""
+    meta = _KIND_META[kind]
+    name = filename or ""
+    if meta["filename_must_contain"] not in name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Filename must contain '{meta['filename_must_contain']}' for the {meta['label']} slot — got '{name}'."
+        )
+    if "must_contain" in meta and meta["must_contain"] not in name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This is the {meta['label']} slot — filename must start with '{meta['must_contain']}' (got '{name}'). Use the National slot instead?"
+        )
+    if "must_not_contain" in meta and meta["must_not_contain"] in name:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This is the {meta['label']} slot — filename must NOT start with '{meta['must_not_contain']}' (got '{name}'). Use the State slot instead?"
+        )
+    # Sanity-check by opening the workbook and confirming the expected sheet name.
+    import io
+    try:
+        from openpyxl import load_workbook
+        wb = load_workbook(io.BytesIO(contents), data_only=True, read_only=True)
+        if meta["expected_sheet"] not in wb.sheetnames:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Workbook is missing the expected '{meta['expected_sheet']}' sheet (got: {wb.sheetnames})."
+            )
+        wb.close()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not read xlsx file: {e}")
+
+
+@router.get("/santander-rates")
+def list_santander_rate_files(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
+    """List the four Santander rate-file slots with their currently
+    uploaded file's metadata. Empty slots show the kind/label only —
+    UI uses this to render upload cards with current-file info."""
+    rows = {r.kind: r for r in db.query(SantanderRateFile).all()}
+    out = []
+    for kind, meta in _KIND_META.items():
+        r = rows.get(kind)
+        out.append({
+            "kind": kind,
+            "label": meta["label"],
+            "filename": r.filename if r else None,
+            "size_bytes": len(r.data) if r and r.data else 0,
+            "uploaded_at": r.uploaded_at.isoformat() if r and r.uploaded_at else None,
+            "uploaded_by": r.uploaded_by if r else None,
+        })
+    return out
+
+
+@router.post("/santander-rates/{kind}")
+async def upload_santander_rate_file(
+    kind: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Upload (or replace) a Santander rate file. Triggers a parse-cache
+    invalidation so the next /api/lookup/rates call picks up the new
+    rates without a redeploy."""
+    if kind not in SANTANDER_RATE_FILE_KINDS:
+        raise HTTPException(status_code=400, detail=f"Unknown rate-file kind: {kind}")
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    _validate_rate_file(kind, file.filename or "", contents)
+
+    existing = db.query(SantanderRateFile).filter(SantanderRateFile.kind == kind).first()
+    if existing:
+        existing.filename = file.filename
+        existing.data = contents
+        existing.uploaded_by = user.username
+    else:
+        db.add(SantanderRateFile(
+            kind=kind, filename=file.filename, data=contents, uploaded_by=user.username,
+        ))
+    db.commit()
+
+    # Invalidate the in-process rate cache so subsequent lookups re-parse the new bytes.
+    from app.services import santander_rates as sr
+    sr.invalidate_cache()
+
+    return {"status": "ok", "kind": kind, "filename": file.filename, "size_bytes": len(contents)}
+
+
+@router.delete("/santander-rates/{kind}")
+def delete_santander_rate_file(
+    kind: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Clear the upload for a slot. Lookup falls back to the filesystem
+    copy bundled in the repo (if any) — useful when a bad upload needs
+    rolling back without re-uploading the previous month's file."""
+    if kind not in SANTANDER_RATE_FILE_KINDS:
+        raise HTTPException(status_code=400, detail=f"Unknown rate-file kind: {kind}")
+    row = db.query(SantanderRateFile).filter(SantanderRateFile.kind == kind).first()
+    if row:
+        db.delete(row)
+        db.commit()
+        from app.services import santander_rates as sr
+        sr.invalidate_cache()
+    return {"status": "ok", "kind": kind}

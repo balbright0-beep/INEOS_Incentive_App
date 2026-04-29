@@ -1,5 +1,18 @@
-"""Parse Santander APR and Lease input files for rate lookups."""
+"""Parse Santander APR and Lease input files for rate lookups.
 
+Source priority:
+  1. SantanderRateFile DB row (uploaded via Settings page) — current
+     month's rates without a redeploy.
+  2. Filesystem fallback — repo-bundled copy. Lets the system keep
+     serving rates if the DB row is missing or there's no upload yet
+     (e.g., new install before the first admin upload).
+
+Parsed rates are cached in process memory keyed by (kind, source-key).
+The Settings upload endpoint calls invalidate_cache() so a new upload
+takes effect immediately — no app restart needed.
+"""
+
+import io
 import os
 import glob
 from openpyxl import load_workbook
@@ -15,8 +28,67 @@ CPOS_TO_TRIM = {
 }
 
 
+# In-process parsed-row cache keyed by (kind, source_key). source_key
+# changes when a new upload lands (uploaded_at timestamp) or when the
+# filesystem copy is swapped (file mtime), so a fresh parse fires
+# automatically on either change.
+_PARSED_CACHE: dict[tuple[str, str], list[dict]] = {}
+
+
+def invalidate_cache() -> None:
+    """Drop the parsed-rate cache. Called by the upload endpoint so
+    newly-uploaded rates take effect on the next lookup."""
+    _PARSED_CACHE.clear()
+
+
+def _load_xlsx_bytes(kind: str, base_dir: str) -> tuple[bytes | None, str]:
+    """Return (xlsx_bytes, source_key) for a given kind. Tries the DB
+    upload first, falls back to the filesystem copy. source_key is
+    used as the cache key so we re-parse when either source changes.
+
+    kind: 'apr' | 'lease' | 'state_apr' | 'state_lease'
+    """
+    # 1. DB upload
+    try:
+        from app.database import SessionLocal
+        from app.models.rate_file import SantanderRateFile
+        with SessionLocal() as db:
+            row = db.query(SantanderRateFile).filter(SantanderRateFile.kind == kind).first()
+            if row and row.data:
+                # uploaded_at changes on every replace -> cache invalidates naturally
+                key = f"db:{row.uploaded_at.isoformat() if row.uploaded_at else 'na'}"
+                return bytes(row.data), key
+    except Exception:
+        # DB not ready (e.g. during startup before tables exist) — fall through.
+        pass
+
+    # 2. Filesystem fallback
+    patterns = {
+        "apr": "INEOS_APRInput_*.xlsx",
+        "lease": "INEOS_LeaseInput_*.xlsx",
+        "state_apr": "State_INEOS_APRInput_*.xlsx",
+        "state_lease": "State_INEOS_LeaseInput_*.xlsx",
+    }
+    pattern = patterns.get(kind)
+    if not pattern:
+        return None, ""
+    matches = glob.glob(os.path.join(base_dir, pattern))
+    if not matches:
+        return None, ""
+    path = max(matches, key=os.path.getmtime)
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        key = f"fs:{path}:{int(os.path.getmtime(path))}"
+        return data, key
+    except OSError:
+        return None, ""
+
+
 def _find_input_files(base_dir: str) -> dict:
-    """Find the latest Santander APR and Lease input files."""
+    """Legacy filesystem-only lookup retained for any caller that still
+    references it directly. New code should use _load_xlsx_bytes which
+    also checks the DB upload."""
     files = {"apr": None, "lease": None, "lease_state": None}
     patterns = {
         "apr": "INEOS_APRInput_*.xlsx",
@@ -37,19 +109,17 @@ def _model_code_to_params(model_code: str) -> dict:
     return {"body_style": body, "model_year": my}
 
 
-def load_apr_rates(base_dir: str) -> list[dict]:
-    """Parse the APR input file. Returns list of rate records."""
-    files = _find_input_files(base_dir)
-    if not files["apr"]:
-        return []
-
-    wb = load_workbook(files["apr"], data_only=True, read_only=True)
+def _parse_apr_xlsx(data: bytes) -> list[dict]:
+    """Parse APR xlsx bytes into rate records. Pulled out so the same
+    parser handles both the National (apr) and State (state_apr) files
+    — same column layout, different region values."""
+    wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     ws = wb["Retail"] if "Retail" in wb.sheetnames else wb[wb.sheetnames[0]]
-    rates = []
-
+    rates: list[dict] = []
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or not row[0]:
             continue
+        region = row[1]
         tier = row[2]
         term = row[3]
         model_code = str(row[9] or "")
@@ -67,6 +137,7 @@ def load_apr_rates(base_dir: str) -> list[dict]:
         trim = CPOS_TO_TRIM.get(cpos, cpos.title() if cpos else "Base")
 
         rates.append({
+            "region": str(region) if region is not None else None,
             "tier": int(tier) if tier else 1,
             "term": int(term) if term else 0,
             "model_code": model_code,
@@ -75,24 +146,21 @@ def load_apr_rates(base_dir: str) -> list[dict]:
             "trim": trim,
             "apr": rate_val,
         })
-
     wb.close()
     return rates
 
 
-def load_lease_rates(base_dir: str) -> list[dict]:
-    """Parse the Lease input file. Returns ALL records per trim/term."""
-    files = _find_input_files(base_dir)
-    if not files["lease"]:
-        return []
-
-    wb = load_workbook(files["lease"], data_only=True, read_only=True)
+def _parse_lease_xlsx(data: bytes) -> list[dict]:
+    """Parse Lease xlsx bytes into rate records. Same parser for
+    National (lease) and State (state_lease) — both have the
+    Region column."""
+    wb = load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     ws = wb["Lease"] if "Lease" in wb.sheetnames else wb[wb.sheetnames[0]]
-    rates = []
-
+    rates: list[dict] = []
     for row in ws.iter_rows(min_row=2, values_only=True):
         if not row or not row[0]:
             continue
+        region = row[1]
         tier = row[2]
         term = row[3]
         model_code = str(row[8] or "")
@@ -119,6 +187,7 @@ def load_lease_rates(base_dir: str) -> list[dict]:
         trim = CPOS_TO_TRIM.get(cpos, cpos.title() if cpos else "Base")
 
         rates.append({
+            "region": str(region) if region is not None else None,
             "tier": int(tier) if tier else 1,
             "term": int(term) if term else 0,
             "model_code": model_code,
@@ -130,9 +199,36 @@ def load_lease_rates(base_dir: str) -> list[dict]:
             "residual_pct": res_val,
             "acq_fee": float(acq_fee) if acq_fee else 895,
         })
-
     wb.close()
     return rates
+
+
+def _cached_rates(kind: str, base_dir: str, parser) -> list[dict]:
+    data, source_key = _load_xlsx_bytes(kind, base_dir)
+    if not data:
+        return []
+    cache_key = (kind, source_key)
+    cached = _PARSED_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    parsed = parser(data)
+    _PARSED_CACHE[cache_key] = parsed
+    return parsed
+
+
+def load_apr_rates(base_dir: str) -> list[dict]:
+    """Return parsed APR rates. National + state files merged; callers
+    that want state-only can filter on the 'region' field."""
+    national = _cached_rates("apr", base_dir, _parse_apr_xlsx)
+    state = _cached_rates("state_apr", base_dir, _parse_apr_xlsx)
+    return national + state
+
+
+def load_lease_rates(base_dir: str) -> list[dict]:
+    """Return parsed lease rates. National + state files merged."""
+    national = _cached_rates("lease", base_dir, _parse_lease_xlsx)
+    state = _cached_rates("state_lease", base_dir, _parse_lease_xlsx)
+    return national + state
 
 
 def get_apr_for_config(base_dir: str, model_year: str, body_style: str,
