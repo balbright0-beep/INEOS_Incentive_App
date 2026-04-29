@@ -1969,7 +1969,15 @@
               )}
               <div className="flex justify-between mt-6 gap-2">
                 <Button onClick={() => setStep(2)} className="bg-white text-onyx border border-dove hover:bg-mushroom-light">← Back</Button>
-                <Button onClick={() => setStep(4)} disabled={!lookup}>Continue to Result →</Button>
+                {/* Block step 3 -> 4 when the selection contains mutually-exclusive
+                    programs so the user can't generate a campaign code from an
+                    invalid stack. The conflict banner above the chooser tells them
+                    what to fix; the disabled button is the enforcement. */}
+                <Button
+                  onClick={() => setStep(4)}
+                  disabled={!lookup || (selection?.conflictSet?.length || 0) > 0}
+                  title={(selection?.conflictSet?.length || 0) > 0 ? 'Resolve the selection conflict before continuing.' : ''}
+                >Continue to Result →</Button>
               </div>
             </div>
           )}

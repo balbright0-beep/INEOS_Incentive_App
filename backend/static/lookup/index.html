@@ -565,7 +565,7 @@
         <div id="step3-content"></div>
         <div style="display:flex;justify-content:space-between;gap:10px;margin-top:24px">
           <button type="button" class="btn-secondary" onclick="goToStep(2)">← Back</button>
-          <button type="button" class="btn-primary" onclick="goToStep(4)">Continue to Result →</button>
+          <button type="button" class="btn-primary" id="step3-next-btn" onclick="_continueToResult()">Continue to Result →</button>
         </div>
       </div>
     </div>
@@ -1082,6 +1082,17 @@
           <h3 class="eyebrow" style="margin:0 0 12px;color:#606060">Not Applicable to This Deal</h3>
           ${na}
         </div>` : ''}`;
+
+      // Sync the Continue button's disabled state with the conflict
+      // status. The button is in static markup outside this innerHTML
+      // swap so updating its attribute directly is the simplest path
+      // — no need to re-render the wizard chrome on every toggle.
+      const continueBtn = $('step3-next-btn');
+      if (continueBtn) {
+        const blocked = conflictSet.length > 0;
+        continueBtn.disabled = blocked;
+        continueBtn.title = blocked ? 'Resolve the selection conflict before continuing.' : '';
+      }
     }
 
     // Walk the current selection to figure out which loyalty/conquest
@@ -1171,6 +1182,22 @@
       const swapped = await _maybeRefetchOnFlagChange();
       _renderSelection();
       if (_wizard.step === 4 || swapped) _drawStep4 && _drawStep4();
+    };
+
+    // Step 3 -> 4 navigation guard. Blocks the move to the result page
+    // when the current selection contains mutually-exclusive programs
+    // so the user can't generate a campaign code from an invalid stack.
+    // The button is also disabled by _renderSelection when conflicts
+    // exist; this is a defense-in-depth check in case the disabled
+    // attr gets bypassed (e.g., older browsers ignoring `disabled`,
+    // someone calling the function directly via console).
+    window._continueToResult = function () {
+      const sel = _computeSelection();
+      if (sel && sel.conflictSet && sel.conflictSet.length) {
+        toast('Resolve the selection conflict before continuing.', 'warn');
+        return;
+      }
+      goToStep(4);
     };
 
     // \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 Step 4: Result + Payment Calculator \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
