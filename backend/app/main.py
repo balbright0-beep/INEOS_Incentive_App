@@ -34,6 +34,57 @@ def _ensure_rule_type_state_value() -> None:
         conn.execute(text("ALTER TYPE rule_type ADD VALUE IF NOT EXISTS 'state'"))
 
 
+def _ensure_program_type_dealer_cash_value() -> None:
+    """
+    Same pattern as the rule_type fix above, for the program_type enum.
+    'dealer_cash' was added to PROGRAM_TYPES so admins can create
+    dealer-funded incentives that stack with everything; existing
+    Postgres enums need the value appended explicitly or program saves
+    fail with InvalidTextRepresentation.
+    """
+    if not settings.DATABASE_URL.startswith("postgres"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TYPE program_type ADD VALUE IF NOT EXISTS 'dealer_cash'"))
+
+
+def _ensure_dealer_cash_stacking_rules() -> None:
+    """
+    Idempotent backfill for the dealer_cash StackingRule rows. The
+    seed only writes rows on a fresh DB, so existing deployments
+    won't have any dealer_cash entries in stacking_rules \u2014 the
+    matrix lookup would treat the program type as disallowed for
+    every deal type. Insert allowed='Y' for cash/apr/lease (the
+    user-stated default: stackable with everything retail) and
+    allowed='N' for cvp/demo (where dealer cash typically isn't
+    layered). Uses the ORM so SQLAlchemy generates the UUID id
+    that the column expects via its Python-side default.
+    """
+    insp = inspect(engine)
+    if "stacking_rules" not in insp.get_table_names():
+        return
+    from app.models.budget import StackingRule  # local import \u2014 model may not be ready at module import time
+    rules = [
+        ("cash", "Y"),
+        ("apr", "Y"),
+        ("lease", "Y"),
+        ("cvp", "N"),
+        ("demo", "N"),
+    ]
+    with SessionLocal() as session:
+        for deal_type, allowed in rules:
+            existing = session.query(StackingRule).filter(
+                StackingRule.deal_type == deal_type,
+                StackingRule.program_type == "dealer_cash",
+            ).first()
+            if existing:
+                continue
+            session.add(StackingRule(
+                deal_type=deal_type, program_type="dealer_cash", allowed=allowed,
+            ))
+        session.commit()
+
+
 def _ensure_cvp_stacking_rules() -> None:
     """
     Idempotent fix-up for the cvp/bonus_cash StackingRule. The seed
@@ -162,11 +213,13 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     # Run idempotent migrations that create_all can't do
     _ensure_rule_type_state_value()
+    _ensure_program_type_dealer_cash_value()
     _ensure_program_published_column()
     _ensure_program_public_facing_column()
     _ensure_program_not_stackable_column()
     _ensure_campaign_code_width()
     _ensure_cvp_stacking_rules()
+    _ensure_dealer_cash_stacking_rules()
     # Seed data
     db = SessionLocal()
     try:

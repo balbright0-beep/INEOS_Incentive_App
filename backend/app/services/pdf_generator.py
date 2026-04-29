@@ -104,6 +104,19 @@ STACKING_INFO = {
         "important_note": "Lease Cash is only available on Santander-contracted lease transactions.",
         "deal_types": "Lease only",
     },
+    "dealer_cash": {
+        "stackable_with": [
+            "All national and regional incentive programs",
+            "Customer Cash, APR Cash, Lease Cash, Bonus Cash",
+            "Loyalty and Conquest programs",
+            "Santander subvented APR / Lease programs",
+        ],
+        "not_stackable_with": [
+            "CVP",
+        ],
+        "important_note": "Dealer Cash is dealer-funded and applied at retailer discretion. Stacks with all national retail programs by default.",
+        "deal_types": "All retail deal types (Cash, APR, Lease)",
+    },
     "loyalty": {
         "stackable_with": [
             "All national and regional incentive programs",

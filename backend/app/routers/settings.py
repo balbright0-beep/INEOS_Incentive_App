@@ -141,7 +141,7 @@ def update_stacking_rules(rules: dict, db: Session = Depends(get_db), user: User
     db.query(StackingRule).delete()
     for deal_type, program_types in rules.items():
         all_types = [
-            "bonus_cash", "customer_cash", "apr_cash", "lease_cash",
+            "bonus_cash", "customer_cash", "apr_cash", "lease_cash", "dealer_cash",
             "cvp", "demonstrator", "loyalty", "conquest", "tactical", "other"
         ]
         for pt in all_types:

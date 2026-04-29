@@ -777,15 +777,17 @@
 
       // Auto-populate stacking when program type changes
       const STACKING_DEFAULTS = {
-        customer_cash: { stackable: ['loyalty','conquest','friends_family','santander_standard'], not_stackable: ['lease_subvention','apr_subvention','cvp'] },
-        bonus_cash: { stackable: ['customer_cash','apr_cash','lease_cash','loyalty','conquest','tactical'], not_stackable: [] },
-        apr_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_apr'], not_stackable: ['customer_cash','lease_subvention','cvp'] },
-        lease_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_lease'], not_stackable: ['customer_cash','apr_subvention','cvp'] },
-        loyalty: { stackable: ['customer_cash','apr_cash','lease_cash','conquest','friends_family','bonus_cash','costco','dealer_employee'], not_stackable: [] },
-        conquest: { stackable: ['customer_cash','loyalty','santander_apr','bonus_cash'], not_stackable: ['cvp'] },
-        cvp: { stackable: ['santander_cpo'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest'] },
-        demonstrator: { stackable: ['bonus_cash'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest','cvp'] },
-        tactical: { stackable: [], not_stackable: [] },
+        customer_cash: { stackable: ['loyalty','conquest','friends_family','santander_standard','dealer_cash'], not_stackable: ['lease_subvention','apr_subvention','cvp'] },
+        bonus_cash: { stackable: ['customer_cash','apr_cash','lease_cash','loyalty','conquest','tactical','dealer_cash'], not_stackable: [] },
+        apr_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_apr','dealer_cash'], not_stackable: ['customer_cash','lease_subvention','cvp'] },
+        lease_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_lease','dealer_cash'], not_stackable: ['customer_cash','apr_subvention','cvp'] },
+        // Dealer-funded incentive — stacks with all retail programs by default.
+        dealer_cash: { stackable: ['customer_cash','bonus_cash','apr_cash','lease_cash','loyalty','conquest','tactical','santander_apr','santander_lease'], not_stackable: ['cvp'] },
+        loyalty: { stackable: ['customer_cash','apr_cash','lease_cash','conquest','friends_family','bonus_cash','costco','dealer_employee','dealer_cash'], not_stackable: [] },
+        conquest: { stackable: ['customer_cash','loyalty','santander_apr','bonus_cash','dealer_cash'], not_stackable: ['cvp'] },
+        cvp: { stackable: ['santander_cpo'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest','dealer_cash'] },
+        demonstrator: { stackable: ['bonus_cash'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest','cvp','dealer_cash'] },
+        tactical: { stackable: ['dealer_cash'], not_stackable: [] },
         other: { stackable: [], not_stackable: [] },
       };
 
@@ -862,6 +864,7 @@
         { value: 'bonus_cash', label: 'Bonus Cash' },
         { value: 'apr_cash', label: 'APR Cash' },
         { value: 'lease_cash', label: 'Lease Cash' },
+        { value: 'dealer_cash', label: 'Dealer Cash' },
         { value: 'cvp', label: 'CVP (Courtesy Vehicle)' },
         { value: 'demonstrator', label: 'Demonstrator' },
         { value: 'loyalty', label: 'Loyalty Rebate' },
@@ -922,6 +925,7 @@
         { value: 'bonus_cash', label: 'Bonus Cash' },
         { value: 'apr_cash', label: 'APR Cash' },
         { value: 'lease_cash', label: 'Lease Cash' },
+        { value: 'dealer_cash', label: 'Dealer Cash' },
         { value: 'loyalty', label: 'Loyalty' },
         { value: 'conquest', label: 'Conquest' },
         { value: 'friends_family', label: 'Friends & Family' },
@@ -2500,7 +2504,7 @@
       if (loading) return <Spinner />;
       if (!rules) return null;
 
-      const allTypes = ['bonus_cash', 'customer_cash', 'apr_cash', 'lease_cash', 'cvp', 'demonstrator', 'loyalty', 'conquest', 'tactical'];
+      const allTypes = ['bonus_cash', 'customer_cash', 'apr_cash', 'lease_cash', 'dealer_cash', 'cvp', 'demonstrator', 'loyalty', 'conquest', 'tactical'];
       const dealTypes = Object.keys(rules);
 
       return (

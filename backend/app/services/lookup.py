@@ -114,10 +114,11 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
         "customer_cash": "Customer Cash",
         "apr_cash": "APR Cash",
         "lease_cash": "Lease Cash",
+        "dealer_cash": "Dealer Cash",
         "cvp": "CVP",
         "demonstrator": "Demonstrator",
     }
-    for pt in ["customer_cash", "apr_cash", "lease_cash", "cvp", "demonstrator"]:
+    for pt in ["customer_cash", "apr_cash", "lease_cash", "dealer_cash", "cvp", "demonstrator"]:
         if pt not in applicable_types:
             not_applicable.append({
                 "program_type": pt,

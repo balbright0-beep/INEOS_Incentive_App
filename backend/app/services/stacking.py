@@ -4,10 +4,13 @@ from sqlalchemy.orm import Session
 from app.models.budget import StackingRule
 
 # Default stacking matrix
+# dealer_cash: dealer-funded incentive — stacks with all retail program
+# types on cash/apr/lease (the user's stated default). Excluded from CVP
+# (standalone channel by convention) and demo (typically not layered).
 DEFAULT_STACKING = {
-    "cash": ["bonus_cash", "customer_cash", "loyalty", "conquest", "tactical"],
-    "apr": ["bonus_cash", "apr_cash", "loyalty", "conquest", "tactical"],
-    "lease": ["bonus_cash", "lease_cash", "loyalty", "conquest", "tactical"],
+    "cash": ["bonus_cash", "customer_cash", "dealer_cash", "loyalty", "conquest", "tactical"],
+    "apr": ["bonus_cash", "apr_cash", "dealer_cash", "loyalty", "conquest", "tactical"],
+    "lease": ["bonus_cash", "lease_cash", "dealer_cash", "loyalty", "conquest", "tactical"],
     # CVP is a standalone retailer/employee channel — by OEM convention
     # it does NOT combine with other retail incentives. Removing
     # bonus_cash here keeps a Friends & Family-style program from
@@ -39,7 +42,7 @@ def seed_default_stacking(db: Session):
         return
     for deal_type, program_types in DEFAULT_STACKING.items():
         all_types = [
-            "bonus_cash", "customer_cash", "apr_cash", "lease_cash",
+            "bonus_cash", "customer_cash", "apr_cash", "lease_cash", "dealer_cash",
             "cvp", "demonstrator", "loyalty", "conquest", "tactical", "other"
         ]
         for pt in all_types:

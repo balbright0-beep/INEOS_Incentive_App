@@ -5,6 +5,7 @@ from app.database import Base
 
 PROGRAM_TYPES = (
     "bonus_cash", "customer_cash", "apr_cash", "lease_cash",
+    "dealer_cash",  # Dealer-funded incentive — typically stackable with all retail programs
     "cvp", "demonstrator", "loyalty", "conquest", "tactical", "other"
 )
 PROGRAM_STATUSES = ("draft", "active", "expired", "cancelled")
