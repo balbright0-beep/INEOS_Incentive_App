@@ -1300,13 +1300,19 @@
 
       const msrp = v('msrp'), down = v('down'), trade = v('trade'), discount = v('discount'), fee = v('dealer_fee');
       const sellingPrice = msrp - discount;
-      // Sales tax — most states allow trade-in to reduce the taxable
-      // base. Customer cash incentives don't usually reduce tax (they
-      // come from the manufacturer post-tax). User can override the
-      // rate to handle states with different rules.
+      // Sales tax basis differs by deal type:
+      //   • Cash / APR -> tax on (selling - trade). Trade reduces base
+      //     in most states; manufacturer cash incentives DON'T (they
+      //     come from the manufacturer post-tax).
+      //   • Lease -> tax on the depreciation only (selling - residual)
+      //     since the customer is consuming the depreciation portion
+      //     of the asset over the lease term, not the residual that
+      //     gets returned. State rules vary; user can override the rate.
+      // Computed inside each tab branch so the hero / lines pick up
+      // the right basis. `tax` is hoisted so the JSX hero block can
+      // reference it for the cash net price.
       const taxRate = Math.max(v('tax_rate'), 0) / 100;
-      const taxableBase = Math.max(sellingPrice - trade, 0);
-      const tax = taxableBase * taxRate;
+      let tax = 0, taxBase = 0;
 
       // Build APR term options from loaded Santander rates
       const aprTermOpts = rates.apr?.length > 0
@@ -1335,6 +1341,8 @@
       let monthly = 0, label = '', lines = [];
 
       if (tab === 'apr') {
+        taxBase = Math.max(sellingPrice - trade, 0);
+        tax = taxBase * taxRate;
         const rate = v('apr') / 100 / 12;
         const term = parseInt(pf.term_finance) || 60;
         const financed = Math.max(sellingPrice - incentive - down - trade + fee + tax, 0);
@@ -1350,20 +1358,25 @@
         ];
       } else if (tab === 'lease') {
         const mf = v('money_factor'), resPct = v('residual_pct'), term = parseInt(pf.term_lease) || 36, acq = v('acq_fee');
-        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq + tax, 0);
         const residual = msrp * resPct / 100;
+        // Lease tax = depreciation only (selling - residual), not full price
+        taxBase = Math.max(sellingPrice - residual, 0);
+        tax = taxBase * taxRate;
+        const adjCap = Math.max(sellingPrice - incentive - down - trade + fee + acq + tax, 0);
         monthly = Math.max((adjCap - residual) / term + (adjCap + residual) * mf, 0);
         const trimLabel = rates.lease?.[0]?.trim || trim || '';
         label = `${term}mo Lease | MF ${pf.money_factor} (${(mf * 2400).toFixed(2)}% APR) | ${resPct}% res @ ${Number(mileage).toLocaleString()} mi/yr${trimLabel ? ' | ' + trimLabel : ''}`;
         lines = [
           ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
           ['Incentive Applied', -incentive], ['Down / Cap Reduction', -down], ['Trade-In', -trade],
-          [`Sales Tax (${(v('tax_rate') || 0).toFixed(2)}%)`, tax],
+          [`Sales Tax (${(v('tax_rate') || 0).toFixed(2)}% on $${Math.round(taxBase).toLocaleString()} depreciation)`, tax],
           ['Acq Fee + Dealer Fee', acq + fee], ['Adj. Cap Cost', adjCap],
           [`Residual (${resPct}%)`, residual],
         ];
       } else {
         label = 'Cash Purchase';
+        taxBase = Math.max(sellingPrice - trade, 0);
+        tax = taxBase * taxRate;
         const net = Math.max(sellingPrice - incentive - down - trade + fee + tax, 0);
         lines = [
           ['MSRP', msrp], ['Dealer Discount', -discount], ['Selling Price', sellingPrice],
