@@ -882,11 +882,12 @@
         const p = preview[c.id] || { available: false, total: 0, program_count: 0 };
         const disabled = !p.available;
         const onclick = disabled ? '' : `onclick="selectDealType('${c.id}')"`;
+        // Total dollar amount intentionally hidden here — the user picks
+        // their deal type before seeing the per-program breakdown so the
+        // headline number doesn't bias toward the highest-stack option.
         const totalLine = p.available
-          ? `<div class="total">${fmtMoney(p.total)}</div>
-             <div class="meta">${p.program_count} program${p.program_count === 1 ? '' : 's'} available</div>`
-          : `<div class="total">—</div>
-             <div class="meta">No active programs for this configuration</div>`;
+          ? `<div class="meta" style="font-size:14px;color:#1D1D1D;font-weight:600">${p.program_count} program${p.program_count === 1 ? '' : 's'} available</div>`
+          : `<div class="meta">No active programs for this configuration</div>`;
         return `
           <button type="button" class="deal-card${disabled ? ' disabled' : ''}" ${onclick} ${disabled ? 'disabled' : ''}>
             <div class="label">${c.sub}</div>
