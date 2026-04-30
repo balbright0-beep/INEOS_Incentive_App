@@ -71,10 +71,46 @@ def public_incentive_lookup(req: LookupRequest, db: Session = Depends(get_db)):
     return result
 
 
+def _has_finance_rates(req: PreviewRequest, deal_type: str) -> bool:
+    """Check whether the Santander rate sheet has rows for this config +
+    deal type. APR/Lease without any rate rows means we can't quote a
+    monthly payment and the wizard shouldn't let the user pick that
+    deal type — Arcane Works Detour is the canonical case (loaded APR
+    rows, empty lease list). Cash deals don't need rates so always
+    return True for cash. Errors loading the rate sheet are treated
+    as "rates available" rather than blocking the wizard, since a file
+    issue isn't the same as a config not being supported."""
+    if deal_type == "cash":
+        return True
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    from app.services.santander_rates import get_apr_for_config, get_lease_for_config
+    try:
+        if deal_type == "apr":
+            rows = get_apr_for_config(
+                base_dir, req.model_year, req.body_style, tier=1,
+                trim=req.trim, state=req.state, special_edition=req.special_edition,
+            )
+        else:  # lease
+            rows = get_lease_for_config(
+                base_dir, req.model_year, req.body_style, tier=1,
+                trim=req.trim, state=req.state, special_edition=req.special_edition,
+            )
+    except Exception:
+        return True
+    return bool(rows)
+
+
 def _preview(db: Session, req: PreviewRequest, public_only: bool) -> PreviewResponse:
     """Run the lookup once per deal type and roll up to the wizard's step-2
     summary. A 'no code' result becomes available=False so the card can grey
-    out instead of disappearing."""
+    out instead of disappearing.
+
+    Lease/APR also gate on rate-sheet coverage — a config with no
+    Santander rows for the deal type (Arcane Works Detour has no
+    lease rates, for example) is reported as available=False with an
+    unavailable_reason the UI shows on the disabled card. Cash isn't
+    rate-gated."""
     if req.zip_code and not req.state:
         resolved = zip_to_state(req.zip_code)
         if resolved:
@@ -95,9 +131,26 @@ def _preview(db: Session, req: PreviewRequest, public_only: bool) -> PreviewResp
             conquest=False,
             loyalty=False,
         )
+        # Rate-availability gate runs FIRST for apr/lease — a config
+        # with no Santander rate rows can't produce a monthly payment,
+        # which is more fundamental than "no code". Arcane Works
+        # Detour is the canonical case: APR rows present, lease list
+        # empty, so lease has to be disabled regardless of what the
+        # campaign-code matrix says about it.
+        if not _has_finance_rates(req, dt):
+            label = "lease" if dt == "lease" else "APR"
+            out[dt] = DealTypePreview(
+                deal_type=dt, total=0.0, program_count=0, available=False,
+                unavailable_reason=f"No Santander {label} rates for this vehicle",
+            )
+            continue
+
         result = lookup_incentive(db, lr, public_only=public_only)
         if result is None:
-            out[dt] = DealTypePreview(deal_type=dt, total=0.0, program_count=0, available=False)
+            out[dt] = DealTypePreview(
+                deal_type=dt, total=0.0, program_count=0, available=False,
+                unavailable_reason="No active program for this configuration",
+            )
         else:
             out[dt] = DealTypePreview(
                 deal_type=dt,

@@ -58,11 +58,15 @@ class LookupResponse(BaseModel):
 
 class DealTypePreview(BaseModel):
     """One deal-type summary for the wizard's step 2 cards. `available`
-    is False when no campaign code matches at all (greyed-out card)."""
+    is False when no campaign code matches OR when the deal type lacks
+    Santander rates for the vehicle (e.g. Arcane Works has APR rows
+    but no lease rows). `unavailable_reason` is shown on the greyed
+    card so the user understands why the option is disabled."""
     deal_type: str
     total: float
     program_count: int
     available: bool
+    unavailable_reason: Optional[str] = None  # populated when available=False
 
 
 class PreviewRequest(BaseModel):

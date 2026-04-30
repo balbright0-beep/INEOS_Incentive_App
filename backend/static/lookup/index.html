@@ -898,14 +898,26 @@
         // Total dollar amount intentionally hidden here — the user picks
         // their deal type before seeing the per-program breakdown so the
         // headline number doesn't bias toward the highest-stack option.
-        const totalLine = p.available
-          ? `<div class="meta" style="font-size:14px;color:#1D1D1D;font-weight:600">${p.program_count} program${p.program_count === 1 ? '' : 's'} available</div>`
-          : `<div class="meta">No active programs for this configuration</div>`;
+        // unavailable_reason comes from the preview API: "No Santander
+        // lease rates for this vehicle" for configs like Arcane Works
+        // that ship without a Santander row, vs the generic "no
+        // programs" fallback when programs are the limiter.
+        let metaText;
+        if (p.available) {
+          metaText = `${p.program_count} program${p.program_count === 1 ? '' : 's'} available`;
+        } else if (p.unavailable_reason) {
+          metaText = p.unavailable_reason;
+        } else {
+          metaText = 'No active programs for this configuration';
+        }
+        const metaStyle = p.available
+          ? 'font-size:14px;color:#1D1D1D;font-weight:600'
+          : 'font-size:13px;color:#9F9F9F';
         return `
-          <button type="button" class="deal-card${disabled ? ' disabled' : ''}" ${onclick} ${disabled ? 'disabled' : ''}>
+          <button type="button" class="deal-card${disabled ? ' disabled' : ''}" ${onclick} ${disabled ? 'disabled' : ''} title="${disabled ? metaText.replace(/"/g, '&quot;') : ''}">
             <div class="label">${c.sub}</div>
             <div class="name">${c.name}</div>
-            ${totalLine}
+            <div class="meta" style="${metaStyle}">${metaText}</div>
           </button>`;
       }).join('');
     }
