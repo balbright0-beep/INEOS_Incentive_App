@@ -1606,6 +1606,18 @@
     const TAB_IDS = ['find', 'santander', 'programs', 'codes', 'docs'];
     const _tabLoaded = { find: true, santander: false, programs: false, codes: false, docs: false };
 
+    // Declared up here (not next to loadSantanderSummary further down)
+    // so the activateTab(tabFromHash()) call below can fire
+    // loadSantanderSummary on a #santander deep-link without hitting
+    // the const-before-init TDZ error.
+    const _santanderSections = [
+      { label: 'MY25 Station Wagon',         model_year: 'MY25', body_style: 'station_wagon' },
+      { label: 'MY26 Station Wagon',         model_year: 'MY26', body_style: 'station_wagon' },
+      { label: 'MY25 Quartermaster',         model_year: 'MY25', body_style: 'quartermaster' },
+      { label: 'MY26 Quartermaster',         model_year: 'MY26', body_style: 'quartermaster' },
+      { label: 'MY25 Arcane Works Detour',   model_year: 'MY25', body_style: 'station_wagon', trim: 'Arcane Works Detour' },
+    ];
+
     function activateTab(name) {
       if (!TAB_IDS.includes(name)) name = 'find';
       TAB_IDS.forEach(id => {
@@ -1630,82 +1642,110 @@
     activateTab(tabFromHash());
 
     // ───────────── Santander Offers tab ─────────────
-    // Lazy-loaded on first activation of the Santander tab. Populates
-    // #santander-summary with the month's headline APR + lease rates
-    // pulled from /api/lookup/rates/summary.
+    // Lazy-loaded on first activation. Fans out to /api/lookup/rates/summary
+    // for each of the headline (model year × body style) combos and renders
+    // them as a vertical stack of cards, each with Finance + Lease columns.
+    // _santanderSections is hoisted up next to TAB_IDS — see comment there.
+
+    function _santanderRowsHtml(d) {
+      const aprRows = d.apr || [];
+      const leaseRows = d.lease || [];
+      const aprList = aprRows.length ? aprRows.map(r => `
+        <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
+          <span style="color:#606060">${r.term}mo</span>
+          <span class="mono" style="color:#1D1D1D;font-weight:600">${Number(r.apr).toFixed(2)}% APR</span>
+        </div>`).join('') : '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published APR offers this month.</div>';
+      const leaseList = leaseRows.length ? leaseRows.map(r => {
+        const mfTxt = r.money_factor != null ? `MF ${r.money_factor}` : 'Std. MF';
+        const resTxt = r.residual_pct != null ? `${r.residual_pct}% res` : '';
+        return `
+        <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
+          <span style="color:#606060">${r.term}mo</span>
+          <span class="mono" style="color:#1D1D1D;font-weight:600">${escapeHtml(mfTxt)}${resTxt ? ' · ' + escapeHtml(resTxt) : ''}</span>
+        </div>`;
+      }).join('') : '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published lease offers this month.</div>';
+      return { aprList, leaseList, hasAny: aprRows.length > 0 || leaseRows.length > 0 };
+    }
+
+    function _santanderEffectivePeriod(results) {
+      // Pull the date range from whichever section has it (rate files all
+      // carry the same Start/End for a given month, so first non-null wins).
+      const fmtDate = (iso) => {
+        if (!iso) return null;
+        try { return new Date(iso + 'T00:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+        catch { return iso; }
+      };
+      const fmtYear = (iso) => {
+        if (!iso) return '';
+        try { return new Date(iso + 'T00:00:00').getFullYear(); } catch { return ''; }
+      };
+      let start, end;
+      for (const r of results) {
+        if (!start && r.effective_start) start = r.effective_start;
+        if (!end && r.effective_end) end = r.effective_end;
+        if (start && end) break;
+      }
+      const startTxt = fmtDate(start);
+      const endTxt = fmtDate(end);
+      const yearTxt = fmtYear(end || start);
+      return (startTxt && endTxt) ? `Effective ${startTxt} – ${endTxt}, ${yearTxt}` : 'Current month';
+    }
+
     async function loadSantanderSummary() {
       _tabLoaded.santander = true;
       const root = $('santander-summary');
       if (!root) return;
       root.innerHTML = '<div class="panel-loading">Loading offers…</div>';
       try {
-        const r = await fetch('/api/lookup/rates/summary?model_year=MY26&body_style=station_wagon&tier=1');
-        if (!r.ok) throw new Error('Failed to load (' + r.status + ')');
-        const d = await r.json();
-        const aprRows = d.apr || [];
-        const leaseRows = d.lease || [];
-        if (aprRows.length === 0 && leaseRows.length === 0) {
+        const results = await Promise.all(_santanderSections.map(async (s) => {
+          const params = new URLSearchParams({
+            model_year: s.model_year, body_style: s.body_style, tier: '1',
+          });
+          if (s.trim) params.set('trim', s.trim);
+          const r = await fetch(`/api/lookup/rates/summary?${params}`);
+          if (!r.ok) return { ...s, apr: [], lease: [] };
+          const d = await r.json();
+          return { ...s, ...d };
+        }));
+
+        const totalRows = results.reduce((n, r) => n + (r.apr?.length || 0) + (r.lease?.length || 0), 0);
+        if (totalRows === 0) {
           root.innerHTML = '<div class="panel-empty">No Santander rates uploaded yet. Check back after the next monthly publish.</div>';
           return;
         }
 
-        const fmtDate = (iso) => {
-          if (!iso) return null;
-          try {
-            const dt = new Date(iso + 'T00:00:00');
-            return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-          } catch { return iso; }
-        };
-        const fmtYear = (iso) => {
-          if (!iso) return '';
-          try { return new Date(iso + 'T00:00:00').getFullYear(); } catch { return ''; }
-        };
-        const startTxt = fmtDate(d.effective_start);
-        const endTxt = fmtDate(d.effective_end);
-        const yearTxt = fmtYear(d.effective_end || d.effective_start);
-        const period = (startTxt && endTxt)
-          ? `Effective ${startTxt} – ${endTxt}, ${yearTxt}`
-          : 'Current month';
+        const period = _santanderEffectivePeriod(results);
 
-        const aprList = aprRows.map(r => `
-          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
-            <span style="color:#606060">${r.term}mo</span>
-            <span class="mono" style="color:#1D1D1D;font-weight:600">${Number(r.apr).toFixed(2)}% APR</span>
-          </div>`).join('');
-
-        const leaseList = leaseRows.map(r => {
-          const mfTxt = r.money_factor != null ? `MF ${r.money_factor}` : 'Std. MF';
-          const resTxt = r.residual_pct != null ? `${r.residual_pct}% res` : '';
+        const cards = results.map(s => {
+          const { aprList, leaseList, hasAny } = _santanderRowsHtml(s);
+          // Subdued styling for empty sections so the user can see we
+          // checked but found nothing for that config this month.
+          const opacity = hasAny ? '1' : '0.65';
           return `
-          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
-            <span style="color:#606060">${r.term}mo</span>
-            <span class="mono" style="color:#1D1D1D;font-weight:600">${escapeHtml(mfTxt)}${resTxt ? ' · ' + escapeHtml(resTxt) : ''}</span>
-          </div>`;
+            <div class="card" style="padding:22px 26px;margin-bottom:14px;opacity:${opacity}">
+              <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:14px;border-bottom:1px solid #E9E8E5;padding-bottom:10px">
+                <h3 style="font-size:17px;color:#1D1D1D;margin:0;font-family:'Formula4x4','Arial Black',sans-serif;letter-spacing:0.02em;text-transform:uppercase">${escapeHtml(s.label)}</h3>
+                <span class="eyebrow">Tier 1 Credit</span>
+              </div>
+              <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:28px">
+                <div>
+                  <div class="eyebrow" style="margin-bottom:6px;color:#1D1D1D">Finance (Retail APR)</div>
+                  ${aprList}
+                </div>
+                <div>
+                  <div class="eyebrow" style="margin-bottom:6px;color:#1D1D1D">Lease</div>
+                  ${leaseList}
+                </div>
+              </div>
+            </div>`;
         }).join('');
 
         root.innerHTML = `
-          <div class="card" style="padding:24px 28px">
-            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:18px;border-bottom:1px solid #E9E8E5;padding-bottom:14px">
-              <div>
-                <div class="eyebrow" style="margin-bottom:2px">This Month's Headline Rates</div>
-                <h2 style="font-size:20px;color:#1D1D1D;margin:0">MY26 Station Wagon · Tier 1 Credit</h2>
-              </div>
-              <div style="font-size:12px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">${escapeHtml(period)}</div>
-            </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:32px">
-              <div>
-                <div class="eyebrow" style="margin-bottom:8px;color:#1D1D1D">Finance (Retail APR)</div>
-                ${aprList || '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published APR offers this month.</div>'}
-              </div>
-              <div>
-                <div class="eyebrow" style="margin-bottom:8px;color:#1D1D1D">Lease</div>
-                ${leaseList || '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published lease offers this month.</div>'}
-              </div>
-            </div>
-            <p style="font-size:11px;color:#9F9F9F;margin:16px 0 0;line-height:1.5">
-              Rates vary by trim, term, and credit tier. State-specific subvention may apply — run a full lookup on the Find Incentive tab to see what applies to a specific deal. Programs are funded by Santander Consumer USA.
-            </p>
-          </div>`;
+          <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div class="eyebrow">All offers — ${escapeHtml(period)}</div>
+            <span style="font-size:11px;color:#9F9F9F">Rates vary by trim, term, and credit tier. State-specific subvention may apply — see a full lookup for deal-specific results.</span>
+          </div>
+          ${cards}`;
       } catch (e) {
         root.innerHTML = `<div class="panel-empty" style="color:#CC0200">${escapeHtml(e.message || 'Failed to load')}</div>`;
       }

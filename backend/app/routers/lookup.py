@@ -374,21 +374,20 @@ def get_rates_summary(
     model_year: str = "MY26",
     body_style: str = "station_wagon",
     tier: int = 1,
+    trim: str = None,
 ):
-    """Headline Santander offers for the home-page banner. Strips down
-    to per-term best APR + best lease MF/residual for a single
-    "headline" config (default: Tier 1 / MY26 SW / any trim) across
-    the loaded national rate sheet. Used by the public Find Incentive
-    landing card so customers can see what's on this month at a
-    glance, without having to walk the wizard first."""
+    """Per-term best APR + best lease MF/residual for one config of
+    (model_year, body_style, tier[, trim]) across the loaded national
+    rate sheet. Used by the Santander Offers tab to show MY25/MY26
+    SW + QM and the MY25 Arcane Works trim each in their own card."""
     import os
     base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
     from app.services.santander_rates import (
         get_apr_for_config, get_lease_for_config,
     )
 
-    apr = get_apr_for_config(base_dir, model_year, body_style, tier, trim=None, state=None)
-    lease = get_lease_for_config(base_dir, model_year, body_style, tier, trim=None, state=None)
+    apr = get_apr_for_config(base_dir, model_year, body_style, tier, trim=trim, state=None)
+    lease = get_lease_for_config(base_dir, model_year, body_style, tier, trim=trim, state=None)
 
     # Effective period — every row in the file has the same Start/End
     # Date pair, so first non-null wins. Public banner shows it as
@@ -405,6 +404,7 @@ def get_rates_summary(
         "model_year": model_year,
         "body_style": body_style,
         "tier": tier,
+        "trim": trim,
         "effective_start": start_date,
         "effective_end": end_date,
         # Trimmed to fields the banner actually shows — keeps the
