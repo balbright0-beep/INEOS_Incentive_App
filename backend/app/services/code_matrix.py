@@ -34,9 +34,11 @@ from app.services.stacking import get_stacking_matrix, is_program_applicable
 # which meant USAPSW (APR Station Wagon) was the same string for
 # MY25 and MY26 — the matrix builder's dedup kept whichever ran
 # first and silently dropped the other, so the retailer lookup for
-# MY26 SW returned 404. Existing 6-char codes (USCAQM, USLESW)
-# stay valid; new codes can grow.
-MAX_CODE_LEN = 10
+# MY26 SW returned 404. Then bumped 10 → 12 so special-edition
+# codes (US + sp[3] + body[2] + my[1] + dt[1] + flags[2]) fit
+# without truncating loyalty+conquest combos like USARDSWTCLC.
+# Existing 6/10-char codes still valid.
+MAX_CODE_LEN = 12
 
 
 # Model year → VIN-standard 10th-character letter. Lines up with the
@@ -75,13 +77,28 @@ def generate_code_string(body_style: str, model_year: str, deal_type: str,
     my_letter = MY_TO_LETTER.get(model_year or "", "")
 
     # ── Special editions (Arcane Works, Iceland Tactical) ──
+    # Body, deal-type, AND flag suffix all matter — the previous
+    # version omitted body + deal-type, so SW vs QM and cash vs apr
+    # vs lease all collided on the same string and matrix dedup
+    # silently dropped the loser. End state: only one code per
+    # special edition + MY survived, so picking Arcane MY25 SW Cash
+    # in the wizard returned 404 because the matrix only had the QM
+    # variant of "USARDSC".
     if special:
         sp_map = {"arcane_works_detour": "ARD", "iceland_tactical": "ICE"}
         sp = sp_map.get(special, special[:3].upper())
-        base = f"US{sp}{my_letter}"
-        if loyalty:
-            return f"{base}L"[:MAX_CODE_LEN]
-        return f"{base}C"[:MAX_CODE_LEN]
+        flag_suffix = ""
+        if loyalty and conquest:
+            flag_suffix = "LC"
+        elif loyalty:
+            flag_suffix = "L"
+        elif conquest:
+            flag_suffix = "C"
+        # Single-letter deal-type prefix keeps the code under
+        # MAX_CODE_LEN. C/A/L/V/D match the cash/apr/lease/cvp/demo
+        # convention of the non-special branches above.
+        dt_letter = {"cash": "C", "apr": "A", "lease": "L", "cvp": "V", "demo": "D"}.get(deal_type, "")
+        return f"US{sp}{body_short}{my_letter}{dt_letter}{flag_suffix}"[:MAX_CODE_LEN]
 
     # ── CVP ──  USCVP + body + my  (e.g. USCVPSWT, USCVPQMS)
     # Body must appear in the code, otherwise SW and QM collapse to

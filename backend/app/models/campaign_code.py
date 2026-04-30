@@ -11,10 +11,13 @@ class CampaignCode(Base):
     __tablename__ = "campaign_codes"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    # Bumped from 6 → 10 so APR/Lease codes can carry a model-year
-    # digit without collision (USAPSW used to be the same string for
-    # MY25 and MY26, dropping one). Existing 6-char codes stay valid.
-    code = Column(String(10), unique=True, nullable=False, index=True)
+    # Bumped 6 → 10 → 12. The 10-bump lets APR/Lease codes carry a
+    # model-year digit (USASWS vs USASWT). The 12-bump makes room
+    # for special-edition codes that need US + sp[3] + body[2] +
+    # my[1] + dt[1] + flags[2] = 12 chars (e.g. USARDSWTCLC for an
+    # MY26 SW Arcane Cash + Loyalty + Conquest combo). Existing
+    # shorter codes stay valid.
+    code = Column(String(12), unique=True, nullable=False, index=True)
     label = Column(String(300), nullable=True)
     support_amount = Column(Numeric(10, 2), nullable=False, default=0)
     model_year = Column(String(10), nullable=True)

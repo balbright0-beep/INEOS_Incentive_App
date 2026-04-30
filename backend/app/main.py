@@ -153,10 +153,10 @@ def _ensure_cvp_stacking_rules() -> None:
 def _ensure_campaign_code_width() -> None:
     """
     Idempotent ALTER for the campaign_codes.code column width.
-    Was String(6); bumped to String(10) so APR/Lease codes can
-    embed a model-year digit. Postgres-only — SQLite doesn't
-    enforce VARCHAR length so its CHECK constraint already
-    accepts any length.
+    Bumped 6 → 10 (APR/Lease MY suffix) → 12 (special-edition
+    codes that need body+deal+flags suffixes). Postgres-only —
+    SQLite doesn't enforce VARCHAR length so its CHECK constraint
+    already accepts any length.
     """
     if not settings.DATABASE_URL.startswith("postgres"):
         return
@@ -167,16 +167,16 @@ def _ensure_campaign_code_width() -> None:
     code_col = cols.get("code")
     if not code_col:
         return
-    # SQLAlchemy reports type as e.g. VARCHAR(6); read .length when
-    # available. Skip if already >= 10.
+    # SQLAlchemy reports type as e.g. VARCHAR(10); read .length when
+    # available. Skip if already >= 12.
     existing_len = getattr(getattr(code_col.get("type"), "length", None), "real", None) or getattr(code_col.get("type"), "length", None)
     try:
-        if existing_len and int(existing_len) >= 10:
+        if existing_len and int(existing_len) >= 12:
             return
     except (TypeError, ValueError):
         pass
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE campaign_codes ALTER COLUMN code TYPE VARCHAR(10)"))
+        conn.execute(text("ALTER TABLE campaign_codes ALTER COLUMN code TYPE VARCHAR(12)"))
 
 
 def _ensure_program_not_stackable_column() -> None:
