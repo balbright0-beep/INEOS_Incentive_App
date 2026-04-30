@@ -28,18 +28,27 @@ from app.models.program import Program
 from app.models.campaign_code import CampaignCode, CampaignCodeLayer
 from app.config import settings
 
-# ── INEOS brand colors ──
-DARK_GREEN = colors.HexColor("#2D5A27")
-LIGHT_GREEN = colors.HexColor("#3A7233")
-GREEN_ACCENT = colors.HexColor("#4A8C42")
+# ── INEOS brand colors — match the web app palette ──
+# Onyx for primary structure (title bar, section headers); flare-red
+# as accent for borders + the brand mark. Mushroom-light + dove for
+# the soft neutral panels. Drops the dark-green-only palette the
+# original bulletin used so the doc reads as part of the same brand
+# system as /lookup/ and the SPA.
 ONYX = colors.HexColor("#1D1D1D")
 CHARCOAL = colors.HexColor("#171717")
+FLARE_RED = colors.HexColor("#FF4639")
+FLARE_RED_DEEP = colors.HexColor("#CC2200")
 MUSHROOM = colors.HexColor("#D9D7D0")
 MUSHROOM_LIGHT = colors.HexColor("#FAFAF9")
 DOVE = colors.HexColor("#E9E8E5")
 IRON_SMOKE = colors.HexColor("#606060")
 SILVER_DUST = colors.HexColor("#9F9F9F")
+SUCCESS_GREEN = colors.HexColor("#2C931E")
 WHITE = colors.white
+
+# Legacy alias kept so any unmodified call sites still work during
+# the rebrand. Slated for removal after the full sweep.
+DARK_GREEN = ONYX
 
 # ── Stacking knowledge per program type ──
 STACKING_INFO = {
@@ -201,54 +210,64 @@ STACKING_INFO = {
 
 
 def _spaced(text):
-    """Convert text to S P A C E D  O U T format like the bulletins use.
-    Each character gets a space, words get triple space between them.
-    E.g., 'Program Overview' -> 'P R O G R A M   O V E R V I E W'
-    """
-    words = text.upper().split()
-    spaced_words = [" ".join(word) for word in words]
-    return "   ".join(spaced_words)
+    """Compatibility shim: previous implementation manually injected
+    spaces between every character to fake CSS letter-spacing
+    (`P R O G R A M   O V E R V I E W`). That broke wrapping and
+    rendered inconsistently — long words wrapped mid-letter, short
+    words like "F O R" ran together.
+
+    Now: the tracking comes from the ParagraphStyle itself via
+    charSpace=. This function just returns the uppercased text so
+    existing call sites keep working without each having to know
+    about the styling change."""
+    return text.upper()
 
 
 def _build_styles():
-    """Build all paragraph styles matching the INEOS bulletin format."""
+    """Paragraph styles matching the INEOS web app brand: onyx structure
+    + flare-red accents, Helvetica throughout (custom INEOS fonts can't
+    be embedded server-side without bundled font files).
+
+    All-caps headers use charSpace= for real letter-spacing instead of
+    the previous manual `S P A C E D` text injection — wraps cleanly
+    and renders consistently regardless of word length."""
     s = {}
 
     s["title"] = ParagraphStyle(
         "title", fontSize=22, fontName="Helvetica-Bold", textColor=WHITE,
-        leading=28, spaceAfter=2,
+        leading=26, spaceAfter=2, charSpace=0.6,
     )
     s["subtitle"] = ParagraphStyle(
-        "subtitle", fontSize=11, fontName="Helvetica", textColor=colors.HexColor("#C0C0C0"),
-        leading=14, spaceAfter=0,
+        "subtitle", fontSize=10, fontName="Helvetica", textColor=colors.HexColor("#BFBFBF"),
+        leading=13, spaceAfter=0, charSpace=1.2,
     )
     s["meta_label"] = ParagraphStyle(
-        "meta_label", fontSize=9, fontName="Helvetica-Bold", textColor=DARK_GREEN,
-        leading=14, spaceBefore=2, spaceAfter=2,
+        "meta_label", fontSize=8, fontName="Helvetica-Bold", textColor=IRON_SMOKE,
+        leading=14, spaceBefore=2, spaceAfter=2, charSpace=1.4,
     )
     s["meta_value"] = ParagraphStyle(
-        "meta_value", fontSize=9, fontName="Helvetica", textColor=ONYX,
+        "meta_value", fontSize=10, fontName="Helvetica", textColor=ONYX,
         leading=14, spaceBefore=2, spaceAfter=2,
     )
     s["overview_heading"] = ParagraphStyle(
-        "overview_heading", fontSize=10, fontName="Helvetica-Bold", textColor=DARK_GREEN,
-        leading=14, spaceBefore=0, spaceAfter=4,
+        "overview_heading", fontSize=9, fontName="Helvetica-Bold", textColor=ONYX,
+        leading=14, spaceBefore=0, spaceAfter=6, charSpace=1.4,
     )
     s["overview_body"] = ParagraphStyle(
-        "overview_body", fontSize=10, fontName="Helvetica", textColor=ONYX,
-        leading=14, spaceAfter=4, alignment=TA_JUSTIFY,
+        "overview_body", fontSize=10.5, fontName="Helvetica", textColor=ONYX,
+        leading=15, spaceAfter=4, alignment=TA_LEFT,
     )
     s["section_heading"] = ParagraphStyle(
-        "section_heading", fontSize=12, fontName="Helvetica-Bold", textColor=WHITE,
-        leading=16, spaceBefore=0, spaceAfter=0,
+        "section_heading", fontSize=11, fontName="Helvetica-Bold", textColor=WHITE,
+        leading=14, spaceBefore=0, spaceAfter=0, charSpace=1.5,
     )
     s["subsection_heading"] = ParagraphStyle(
-        "subsection_heading", fontSize=9, fontName="Helvetica-Bold", textColor=DARK_GREEN,
-        leading=14, spaceBefore=8, spaceAfter=4,
+        "subsection_heading", fontSize=8.5, fontName="Helvetica-Bold", textColor=IRON_SMOKE,
+        leading=14, spaceBefore=8, spaceAfter=4, charSpace=1.4,
     )
     s["body"] = ParagraphStyle(
         "body", fontSize=10, fontName="Helvetica", textColor=ONYX,
-        leading=14, spaceAfter=4, alignment=TA_JUSTIFY,
+        leading=14, spaceAfter=4, alignment=TA_LEFT,
     )
     s["body_bold"] = ParagraphStyle(
         "body_bold", fontSize=10, fontName="Helvetica-Bold", textColor=ONYX,
@@ -256,35 +275,42 @@ def _build_styles():
     )
     s["bullet"] = ParagraphStyle(
         "bullet", fontSize=10, fontName="Helvetica", textColor=ONYX,
-        leading=14, spaceAfter=2, leftIndent=18, bulletIndent=6,
+        leading=14, spaceAfter=3, leftIndent=18, bulletIndent=6,
     )
     s["sub_bullet"] = ParagraphStyle(
         "sub_bullet", fontSize=9, fontName="Helvetica", textColor=IRON_SMOKE,
         leading=13, spaceAfter=2, leftIndent=36, bulletIndent=24,
     )
     s["important_label"] = ParagraphStyle(
-        "important_label", fontSize=9, fontName="Helvetica-Bold", textColor=colors.HexColor("#CC3300"),
-        leading=12, spaceBefore=4, spaceAfter=2,
+        "important_label", fontSize=8, fontName="Helvetica-Bold", textColor=FLARE_RED_DEEP,
+        leading=12, spaceBefore=4, spaceAfter=2, charSpace=1.5,
     )
     s["important_body"] = ParagraphStyle(
         "important_body", fontSize=10, fontName="Helvetica-Bold", textColor=ONYX,
         leading=14, spaceAfter=4,
     )
     s["stat_label"] = ParagraphStyle(
-        "stat_label", fontSize=7, fontName="Helvetica-Bold", textColor=DARK_GREEN,
-        leading=10, alignment=TA_CENTER,
+        "stat_label", fontSize=7.5, fontName="Helvetica-Bold", textColor=IRON_SMOKE,
+        leading=10, alignment=TA_CENTER, charSpace=1.2,
     )
     s["stat_value"] = ParagraphStyle(
-        "stat_value", fontSize=22, fontName="Helvetica-Bold", textColor=ONYX,
-        leading=26, alignment=TA_CENTER,
+        "stat_value", fontSize=20, fontName="Helvetica-Bold", textColor=ONYX,
+        leading=24, alignment=TA_CENTER,
+    )
+    # Smaller variant for non-currency stat values (body labels, date
+    # ranges, multi-word phrases) that wrap awkwardly inside the
+    # narrow stat-box columns at the 20pt currency size.
+    s["stat_value_text"] = ParagraphStyle(
+        "stat_value_text", fontSize=12.5, fontName="Helvetica-Bold", textColor=ONYX,
+        leading=15, alignment=TA_CENTER,
     )
     s["stat_sub"] = ParagraphStyle(
         "stat_sub", fontSize=8, fontName="Helvetica", textColor=IRON_SMOKE,
-        leading=10, alignment=TA_CENTER,
+        leading=11, alignment=TA_CENTER,
     )
     s["qr_label"] = ParagraphStyle(
-        "qr_label", fontSize=10, fontName="Helvetica-Bold", textColor=ONYX,
-        leading=14,
+        "qr_label", fontSize=9.5, fontName="Helvetica-Bold", textColor=IRON_SMOKE,
+        leading=14, charSpace=0.6,
     )
     s["qr_value"] = ParagraphStyle(
         "qr_value", fontSize=10, fontName="Helvetica", textColor=ONYX,
@@ -295,16 +321,16 @@ def _build_styles():
         leading=11, spaceAfter=4, alignment=TA_JUSTIFY,
     )
     s["disclaimer_heading"] = ParagraphStyle(
-        "disclaimer_heading", fontSize=9, fontName="Helvetica-Bold", textColor=DARK_GREEN,
-        leading=12, spaceBefore=8, spaceAfter=4,
+        "disclaimer_heading", fontSize=8.5, fontName="Helvetica-Bold", textColor=IRON_SMOKE,
+        leading=12, spaceBefore=8, spaceAfter=4, charSpace=1.4,
     )
     s["footer"] = ParagraphStyle(
-        "footer", fontSize=8, fontName="Helvetica-Oblique", textColor=SILVER_DUST,
-        alignment=TA_CENTER, leading=10,
+        "footer", fontSize=7.5, fontName="Helvetica", textColor=SILVER_DUST,
+        alignment=TA_CENTER, leading=10, charSpace=0.4,
     )
     s["footer_brand"] = ParagraphStyle(
         "footer_brand", fontSize=10, fontName="Helvetica-Bold", textColor=ONYX,
-        alignment=TA_CENTER, leading=14, spaceBefore=6,
+        alignment=TA_CENTER, leading=14, spaceBefore=6, charSpace=2.0,
     )
     s["contact_note"] = ParagraphStyle(
         "contact_note", fontSize=9, fontName="Helvetica-Oblique", textColor=IRON_SMOKE,
@@ -314,17 +340,19 @@ def _build_styles():
 
 
 def _section_header(text, styles):
-    """Create a green-background section header like the bulletins."""
+    """Onyx-background section header. Letter-spacing comes from the
+    section_heading style's charSpace= rather than manual `_spaced()`
+    injection so wrapping behaves correctly on long strings."""
     t = Table(
-        [[Paragraph(text, styles["section_heading"])]],
-        colWidths=[6.85 * inch],
-        rowHeights=[0.35 * inch],
+        [[Paragraph(text.upper(), styles["section_heading"])]],
+        colWidths=[7.0 * inch],
+        rowHeights=[0.32 * inch],
     )
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), DARK_GREEN),
+        ("BACKGROUND", (0, 0), (-1, -1), ONYX),
         ("ALIGN", (0, 0), (-1, -1), "LEFT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
         ("TOPPADDING", (0, 0), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
@@ -332,28 +360,33 @@ def _section_header(text, styles):
 
 
 def _title_bar(title, subtitle, styles):
-    """Create the dark green title bar at top of page 1."""
+    """Onyx title bar with a flare-red accent line beneath. Mirrors
+    the `border-bottom: 3px solid flare-red` treatment on the public
+    /lookup/ header so the bulletin reads as part of the same brand
+    system."""
     content = [
-        [Paragraph(title, styles["title"])],
-        [Paragraph(subtitle, styles["subtitle"])],
+        [Paragraph(title.upper(), styles["title"])],
+        [Paragraph(subtitle.upper(), styles["subtitle"])],
     ]
-    t = Table(content, colWidths=[6.85 * inch])
+    t = Table(content, colWidths=[7.0 * inch])
     t.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), DARK_GREEN),
-        ("LEFTPADDING", (0, 0), (-1, -1), 14),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-        ("TOPPADDING", (0, 0), (0, 0), 14),
-        ("BOTTOMPADDING", (-1, -1), (-1, -1), 12),
+        ("BACKGROUND", (0, 0), (-1, -1), ONYX),
+        ("LEFTPADDING", (0, 0), (-1, -1), 16),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 16),
+        ("TOPPADDING", (0, 0), (0, 0), 16),
+        ("BOTTOMPADDING", (-1, -1), (-1, -1), 14),
+        ("LINEBELOW", (0, -1), (-1, -1), 3, FLARE_RED),
     ]))
     return t
 
 
 def _meta_row(label, value, styles):
-    """REGION / FOR ATTENTION / CONTACT metadata rows."""
+    """REGION / FOR ATTENTION / CONTACT metadata rows. Label uses the
+    eyebrow tracking treatment; value reads as standard body text."""
     t = Table(
-        [[Paragraph(_spaced(label), styles["meta_label"]),
+        [[Paragraph(label.upper(), styles["meta_label"]),
           Paragraph(value, styles["meta_value"])]],
-        colWidths=[1.7 * inch, 5.15 * inch],
+        colWidths=[1.7 * inch, 5.3 * inch],
     )
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -362,122 +395,306 @@ def _meta_row(label, value, styles):
 
 
 def _overview_box(heading_text, body_text, styles):
-    """Program overview in a box with green left accent border."""
+    """Program overview in a card with a flare-red left accent — same
+    visual treatment as the result-card border on the wizard."""
     content = [
-        Paragraph(_spaced(heading_text), styles["overview_heading"]),
+        Paragraph(heading_text.upper(), styles["overview_heading"]),
         Paragraph(body_text, styles["overview_body"]),
     ]
-    inner = Table([[content]], colWidths=[6.5 * inch])
+    inner = Table([[content]], colWidths=[6.7 * inch])
     inner.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("TOPPADDING", (0, 0), (-1, -1), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-        ("LINEBELOW", (0, 0), (-1, -1), 0.5, DOVE),
-        ("LINEBEFORE", (0, 0), (0, -1), 3, DARK_GREEN),
+        ("LEFTPADDING", (0, 0), (-1, -1), 14),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+        ("BACKGROUND", (0, 0), (-1, -1), MUSHROOM_LIGHT),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, FLARE_RED),
         ("BOX", (0, 0), (-1, -1), 0.5, DOVE),
     ]))
     return inner
 
 
 def _stat_boxes(stats, styles):
-    """Three stat callout boxes: [(label, value, sub), ...]"""
+    """Variable-width stat callout boxes. Accepts 1-4 entries; column
+    widths split evenly across 7.0in. Onyx top accent line ties them
+    to the section headers."""
+    n = len(stats)
+    if n == 0:
+        return Spacer(1, 0)
+    col_w = 7.0 / n
+    # Pick stat_value (20pt bold currency) only for short numeric-looking
+    # strings — anything longer than ~10 chars wraps in the narrow column,
+    # so multi-word phrases like "Station Wagon + Quartermaster" or date
+    # ranges like "Apr 01 – Apr 30, 2026" use the smaller stat_value_text
+    # variant.
+    def _value_style(v):
+        s = str(v)
+        if len(s) <= 10 and (s.startswith("$") or s.replace(",", "").replace(".", "").isdigit() or s in ("All", "Yes", "No")):
+            return styles["stat_value"]
+        return styles["stat_value_text"]
+
     cells = []
     for label, value, sub in stats:
         cell_content = [
-            Paragraph(_spaced(label), styles["stat_label"]),
-            Spacer(1, 2),
-            Paragraph(value, styles["stat_value"]),
-            Paragraph(sub, styles["stat_sub"]),
+            Paragraph(label.upper(), styles["stat_label"]),
+            Spacer(1, 4),
+            Paragraph(value, _value_style(value)),
+            Paragraph(sub, styles["stat_sub"]) if sub else Spacer(1, 0),
         ]
         cells.append(cell_content)
 
-    t = Table([cells], colWidths=[2.28 * inch] * 3)
-    t.setStyle(TableStyle([
+    t = Table([cells], colWidths=[col_w * inch] * n)
+    style_cmds = [
         ("BOX", (0, 0), (-1, -1), 0.5, DOVE),
-        ("LINEAFTER", (0, 0), (-2, -1), 0.5, DOVE),
+        ("BACKGROUND", (0, 0), (-1, -1), WHITE),
+        ("LINEABOVE", (0, 0), (-1, 0), 2, ONYX),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-        ("TOPPADDING", (0, 0), (-1, -1), 10),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-    ]))
+        ("TOPPADDING", (0, 0), (-1, -1), 12),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 12),
+    ]
+    if n > 1:
+        style_cmds.append(("LINEAFTER", (0, 0), (-2, -1), 0.5, DOVE))
+    t.setStyle(TableStyle(style_cmds))
     return t
 
 
 def _important_box(text, styles):
-    """Red-labeled IMPORTANT callout box."""
+    """Flare-red-bordered IMPORTANT callout. Background is a soft
+    red-tinted neutral so it reads as a warning without being loud."""
     content = [
-        [Paragraph(_spaced("Important"), styles["important_label"])],
+        [Paragraph("Important".upper(), styles["important_label"])],
         [Paragraph(f"<b>{text}</b>", styles["important_body"])],
     ]
-    t = Table(content, colWidths=[6.5 * inch])
+    t = Table(content, colWidths=[6.7 * inch])
     t.setStyle(TableStyle([
-        ("LINEBEFORE", (0, 0), (0, -1), 3, colors.HexColor("#CC3300")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (0, 0), 4),
-        ("BOTTOMPADDING", (-1, -1), (-1, -1), 6),
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFF8F6")),
+        ("LINEBEFORE", (0, 0), (0, -1), 3, FLARE_RED_DEEP),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (0, 0), 8),
+        ("BOTTOMPADDING", (-1, -1), (-1, -1), 8),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FEF6F5")),
     ]))
     return t
 
 
 def _quick_reference_table(rows, styles):
-    """Quick Reference key-value table."""
+    """Quick Reference key-value table. Alternating row backgrounds
+    so the eye can scan label→value pairs quickly."""
     data = []
     for label, value in rows:
         data.append([
-            Paragraph(f"<b>{label}</b>", styles["qr_label"]),
+            Paragraph(label.upper(), styles["qr_label"]),
             Paragraph(value, styles["qr_value"]),
         ])
-    t = Table(data, colWidths=[2.0 * inch, 4.85 * inch])
+    t = Table(data, colWidths=[1.85 * inch, 5.15 * inch])
     t.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-        ("LINEBELOW", (0, 0), (-1, -2), 0.5, DOVE),
-        ("LINEBELOW", (0, -1), (-1, -1), 0.5, DOVE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 7),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.5, DOVE),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [WHITE, MUSHROOM_LIGHT]),
     ]))
     return t
 
 
+def _on_page_footer(canvas, doc):
+    """Page-template callback: paints the footer + page-number stamp on
+    every page so multi-page bulletins don't all say "Page 1". Uses
+    canvas drawing directly (faster than re-flowing a Paragraph for
+    each page)."""
+    canvas.saveState()
+    page_w, page_h = letter
+    # Divider line above the footer
+    canvas.setStrokeColor(MUSHROOM)
+    canvas.setLineWidth(0.5)
+    canvas.line(0.6 * inch, 0.55 * inch, page_w - 0.6 * inch, 0.55 * inch)
+    # Brand mark — IN-EO-S | GRENADIER with red 'A'
+    canvas.setFillColor(ONYX)
+    canvas.setFont("Helvetica-Bold", 9.5)
+    brand_text = "INEOS  |  GRENADIER"
+    text_w = canvas.stringWidth(brand_text, "Helvetica-Bold", 9.5)
+    x = (page_w - text_w) / 2
+    canvas.drawString(x, 0.40 * inch, brand_text)
+    # The 'A' in GRENADIER painted red over the existing one — find
+    # its x position by string-width arithmetic.
+    prefix = "INEOS  |  GREN"
+    a_x = x + canvas.stringWidth(prefix, "Helvetica-Bold", 9.5)
+    canvas.setFillColor(FLARE_RED)
+    canvas.drawString(a_x, 0.40 * inch, "A")
+    # Confidential + page number
+    canvas.setFillColor(SILVER_DUST)
+    canvas.setFont("Helvetica", 7.5)
+    footer = f"Confidential  ·  INEOS Automotive Americas  ·  Page {doc.page}"
+    fw = canvas.stringWidth(footer, "Helvetica", 7.5)
+    canvas.drawString((page_w - fw) / 2, 0.27 * inch, footer)
+    canvas.restoreState()
+
+
+# Retained for backwards compatibility — older call sites that built
+# the footer as flowables. The page-template callback above is the
+# preferred path; this helper is now a no-op spacer.
 def _footer_block(page_num, styles):
-    """Footer with INEOS|GRENADIER branding."""
-    elements = [
-        Spacer(1, 20),
-        HRFlowable(width="100%", thickness=0.5, color=MUSHROOM, spaceAfter=6),
-        Paragraph("IN<b>EO</b>S | G R E N <font color='#FF4639'>A</font> D I E R", styles["footer_brand"]),
-        Paragraph(f"Confidential &middot; INEOS Automotive Americas &middot; Page {page_num}", styles["footer"]),
-    ]
-    return elements
+    return [Spacer(1, 0)]
+
+
+def _rule_values(program, rule_type):
+    """Pull the value list for a single rule_type off a program. Always
+    returns a list (or [] when the rule isn't present), so callers can
+    iterate without None-checks."""
+    for rule in program.rules:
+        if rule.rule_type == rule_type:
+            v = rule.value
+            return v if isinstance(v, list) else [v]
+    return []
+
+
+_SPECIAL_EDITION_LABELS = {
+    "arcane_works_detour": "Arcane Works Detour",
+    "iceland_tactical": "Iceland Tactical",
+}
 
 
 def _get_eligible_models_text(program):
-    """Extract eligible models description from program rules."""
-    body_styles = []
-    model_years = []
-    for rule in program.rules:
-        if rule.rule_type == "body_style":
-            val = rule.value if isinstance(rule.value, list) else [rule.value]
-            body_styles = [str(v).replace("_", " ").title() for v in val]
-        elif rule.rule_type == "model_year":
-            val = rule.value if isinstance(rule.value, list) else [rule.value]
-            model_years = [str(v) for v in val]
+    """Compose the 'eligible models' descriptor from the program's
+    actual rules. Was previously model_year + body only — now also
+    surfaces trim / state / special_edition restrictions so a deal
+    targeted at e.g. "MY26 SW Trialmaster, CA only" actually says so."""
+    model_years = [str(v) for v in _rule_values(program, "model_year")]
+    body_styles = [str(v).replace("_", " ").title() for v in _rule_values(program, "body_style")]
+    trims = [str(v) for v in _rule_values(program, "trim")]
+    states = [str(v).upper() for v in _rule_values(program, "state")]
+    specials = [_SPECIAL_EDITION_LABELS.get(str(v), str(v).replace("_", " ").title())
+                for v in _rule_values(program, "special_edition")]
 
-    parts = []
-    if model_years:
-        years = " & ".join(model_years)
-    else:
-        years = "All model years"
-    if body_styles:
-        bodies = " & ".join(body_styles)
-    else:
-        bodies = "Station Wagon & Quartermaster"
-    return f"{years} INEOS Grenadier {bodies}"
+    years = " & ".join(model_years) if model_years else "All model years"
+    bodies = " & ".join(body_styles) if body_styles else "Station Wagon & Quartermaster"
+    base = f"{years} INEOS Grenadier {bodies}"
+
+    suffix_parts = []
+    if trims:
+        suffix_parts.append(f"trim: {', '.join(trims)}")
+    if specials:
+        suffix_parts.append(f"edition: {', '.join(specials)}")
+    if states:
+        suffix_parts.append(f"states: {', '.join(states)}")
+    if suffix_parts:
+        return f"{base} ({'; '.join(suffix_parts)})"
+    return base
+
+
+def _format_program_summary(program) -> str:
+    """One-line program descriptor for cross-references in stacking
+    exclusions. Keeps the bulletin readable even when the user
+    excluded a specific other program rather than a whole type."""
+    type_label = (program.program_type or "").replace("_", " ").title()
+    amount = float(program.per_unit_amount or 0)
+    return f"{program.name} ({type_label}, ${amount:,.0f})" if amount else f"{program.name} ({type_label})"
+
+
+def _resolve_excluded_programs(db: Session, program) -> list:
+    """Look up the Program rows whose ids appear in this program's
+    not_stackable_program_ids. Surfaces them in the bulletin's
+    "Not stackable with" section so the doc reflects what the admin
+    actually configured in the wizard, not just generic boilerplate."""
+    ids = list(getattr(program, "not_stackable_program_ids", None) or [])
+    if not ids:
+        return []
+    return db.query(Program).filter(Program.id.in_(ids)).all()
 
 
 def _get_stacking_info(program_type):
-    """Get stacking info for a program type, with fallback."""
+    """Get stacking info for a program type, with fallback. Used as
+    BASELINE descriptive language; the bulletin also surfaces the
+    program's actual not_stackable_program_ids on top of this."""
     return STACKING_INFO.get(program_type, STACKING_INFO.get("tactical", {}))
+
+
+def _stats_for_program(program):
+    """Build the 3-up stat callouts from the program's actual rules.
+    Previously these were hardcoded per type — a SW-only customer-cash
+    program incorrectly showed both bodies at the same amount because
+    body_style rules weren't consulted. Now the stats reflect what
+    the program is actually targeting."""
+    amount = float(program.per_unit_amount or 0)
+    amount_str = f"${amount:,.0f}"
+    type_label = (program.program_type or "").replace("_", " ").title()
+    body_styles = _rule_values(program, "body_style")
+    model_years = _rule_values(program, "model_year")
+    eff = program.effective_date
+    exp = program.expiration_date
+    period_str = ""
+    if eff and exp:
+        period_str = f"{eff.strftime('%b %d')} – {exp.strftime('%b %d, %Y')}"
+
+    pt = program.program_type
+
+    if pt in ("customer_cash", "bonus_cash", "dealer_cash", "apr_cash", "lease_cash"):
+        # Per-deal-type cash incentive — show amount + scope + period.
+        body_label = (
+            "All bodies" if not body_styles
+            else " + ".join(b.replace("_", " ").title() for b in body_styles)
+        )
+        my_label = " + ".join(model_years) if model_years else "All MYs"
+        return [
+            (type_label, amount_str, "per vehicle"),
+            ("Eligible Bodies", body_label, my_label),
+            ("Effective", period_str or "—", "current cycle"),
+        ]
+    if pt == "loyalty":
+        return [
+            ("Loyalty Rebate", amount_str, "per transaction"),
+            ("Deal Types", "All", "lease, finance, cash"),
+            ("Stacking", "Standard", "see exclusions below"),
+        ]
+    if pt == "conquest":
+        return [
+            ("Conquest Cash", amount_str, "applied at point of sale"),
+            ("Trade-in", "Not required", "qualifying brand only"),
+            ("Deal Types", "All", "lease, finance, cash"),
+        ]
+    if pt == "cvp":
+        return [
+            ("Total Incentive", amount_str, "per enrolled VIN"),
+            ("In-Service", "90 Days", "minimum requirement"),
+            ("Mileage Min", "5,000 mi", "at out-of-service"),
+        ]
+    if pt == "demonstrator":
+        return [
+            ("Demo Cash", amount_str, "per demonstrator unit"),
+            ("Deal Types", "Demo only", "separate eligibility"),
+            ("Effective", period_str or "—", "current cycle"),
+        ]
+    # tactical / other — show two stats, omit the third filler box
+    return [
+        ("Incentive", amount_str, "per vehicle"),
+        ("Effective", period_str or "—", "current cycle"),
+    ]
+
+
+def _amount_by_model_rows(program):
+    """Generate the per-(model_year × body_style) rows for the
+    AMOUNT BY MODEL table. Always emits the cross-product of the
+    program's actual model_year × body_style rules — the previous
+    nested-loop-with-break implementation only emitted rows for the
+    first body_style rule, dropping data on multi-body programs."""
+    amount = float(program.per_unit_amount or 0)
+    amount_str = f"${amount:,.0f}"
+    body_styles = _rule_values(program, "body_style") or ["station_wagon", "quartermaster"]
+    model_years = _rule_values(program, "model_year") or ["MY25", "MY26"]
+    trims = _rule_values(program, "trim")
+    rows = []
+    for my in model_years:
+        for bs in body_styles:
+            year = my.replace("MY", "20")
+            label = f"{year} Grenadier {bs.replace('_', ' ').title()}"
+            if trims:
+                label += f" — {', '.join(trims)}"
+            rows.append((label, amount_str))
+    return rows
 
 
 def generate_program_bulletin(db: Session, program_id: str) -> str:
@@ -496,12 +713,15 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     doc = SimpleDocTemplate(
         filepath, pagesize=letter,
         leftMargin=0.75 * inch, rightMargin=0.75 * inch,
-        topMargin=0.6 * inch, bottomMargin=0.6 * inch,
+        topMargin=0.55 * inch, bottomMargin=0.75 * inch,
+        title=f"INEOS Bulletin — {program.name}",
+        author="INEOS Automotive Americas",
     )
 
     story = []
     type_label = program.program_type.replace("_", " ").upper()
-    month_year = program.effective_date.strftime("%B %Y")
+    type_title = type_label.title()
+    month_year = program.effective_date.strftime("%B %Y") if program.effective_date else ""
     eff = program.effective_date.strftime("%B %d, %Y") if program.effective_date else ""
     exp = program.expiration_date.strftime("%B %d, %Y") if program.expiration_date else ""
     eff_short = program.effective_date.strftime("%B %d") if program.effective_date else ""
@@ -514,12 +734,14 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     # ═══════════════════ PAGE 1 ═══════════════════
 
     # Title bar
-    story.append(_title_bar(
-        program.name.upper(),
-        f"Program Bulletin | {month_year}",
-        styles
-    ))
-    story.append(Spacer(1, 14))
+    subtitle = f"Program Bulletin · {month_year}" if month_year else "Program Bulletin"
+    story.append(_title_bar(program.name, subtitle, styles))
+    story.append(Spacer(1, 16))
+
+    # Resolve program-specific stacking exclusions for use later (the
+    # admin can pick specific other programs to exclude in the wizard).
+    excluded_programs = _resolve_excluded_programs(db, program)
+    public_facing = bool(getattr(program, "public_facing", True))
 
     # Metadata
     story.append(_meta_row("Region", "United States of America", styles))
@@ -535,111 +757,87 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     story.append(_overview_box("Program Overview", overview_text, styles))
     story.append(Spacer(1, 14))
 
-    # Stat callout boxes — context-dependent
-    if program.program_type == "customer_cash":
-        stats = [
-            ("Station Wagon", amount_str, "customer cash"),
-            ("Quartermaster", amount_str, "customer cash"),
-            ("Incl. Arcane Works", "Yes", "all SW trims eligible"),
-        ]
-    elif program.program_type == "loyalty":
-        stats = [
-            ("Rebate", amount_str, "per transaction"),
-            ("Deal Types", "All", "lease, finance, cash"),
-            ("Stacking", "Full", "with all programs"),
-        ]
-    elif program.program_type == "conquest":
-        stats = [
-            ("Customer Cash", amount_str, "applied at point of sale"),
-            ("Deal Types", "All", "finance, lease, cash"),
-            ("Conquest Req", "Yes", "qualifying trade brand"),
-        ]
-    elif program.program_type == "cvp":
-        stats = [
-            ("Total Incentive", amount_str, "per enrolled VIN"),
-            ("In-Service", "90 Days", "minimum requirement"),
-            ("Mileage Min", "5,000", "minimum at out of service"),
-        ]
-    else:
-        stats = [
-            ("Incentive", amount_str, "per vehicle"),
-            ("Effective Period", f"{eff_short} \u2013 {exp_short}", ""),
-            ("Eligible Models", "All Grenadier", eligible_models.split("Grenadier")[-1].strip() if "Grenadier" in eligible_models else ""),
-        ]
-    story.append(_stat_boxes(stats, styles))
-    story.append(Spacer(1, 16))
+    # Stat callouts — built from the program's actual rules so a
+    # SW-only customer-cash program no longer shows both bodies at
+    # the same amount, etc.
+    story.append(_stat_boxes(_stats_for_program(program), styles))
+    story.append(Spacer(1, 18))
 
-    # ── Amount by model section (for cash-type programs) ──
-    if program.program_type in ("customer_cash", "bonus_cash"):
-        story.append(_section_header(f"{type_label} BY MODEL", styles))
-        story.append(Spacer(1, 6))
-        model_data = [
-            [Paragraph("<b>Model</b>", styles["body_bold"]),
-             Paragraph(f"<b>{type_label.title()}</b>", styles["body_bold"])],
-        ]
-        for rule in program.rules:
-            if rule.rule_type == "body_style":
-                vals = rule.value if isinstance(rule.value, list) else [rule.value]
-                for bs in vals:
-                    for yr_rule in program.rules:
-                        if yr_rule.rule_type == "model_year":
-                            yrs = yr_rule.value if isinstance(yr_rule.value, list) else [yr_rule.value]
-                            for yr in yrs:
-                                label = f"{yr.replace('MY', '20')} Grenadier {bs.replace('_', ' ').title()}"
-                                model_data.append([
-                                    Paragraph(f"<b>{label}</b>", styles["body"]),
-                                    Paragraph(amount_str, styles["body"]),
-                                ])
-                            break
-                break
-        if len(model_data) > 1:
-            mt = Table(model_data, colWidths=[4.35 * inch, 2.5 * inch])
+    # AMOUNT BY MODEL — every (model_year x body_style) the program targets,
+    # built from the actual rules. Now applies to every cash-type program
+    # (was only customer_cash + bonus_cash) and uses the rebuilt
+    # _amount_by_model_rows helper that no longer drops rows when more
+    # than one body_style rule is present.
+    if program.program_type in ("customer_cash", "bonus_cash", "dealer_cash", "apr_cash", "lease_cash"):
+        story.append(_section_header(f"{type_title} by Model", styles))
+        story.append(Spacer(1, 8))
+        model_rows = _amount_by_model_rows(program)
+        if model_rows:
+            data = [[
+                Paragraph("<b>Model</b>", styles["body_bold"]),
+                Paragraph(f"<b>{type_title}</b>", styles["body_bold"]),
+            ]] + [
+                [Paragraph(label, styles["body"]), Paragraph(val, styles["body"])]
+                for label, val in model_rows
+            ]
+            mt = Table(data, colWidths=[4.7 * inch, 2.3 * inch])
             mt.setStyle(TableStyle([
-                ("BACKGROUND", (0, 0), (-1, 0), DOVE),
-                ("LINEBELOW", (0, 0), (-1, -2), 0.5, DOVE),
-                ("LINEBELOW", (0, -1), (-1, -1), 0.5, DOVE),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-                ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                ("BACKGROUND", (0, 0), (-1, 0), MUSHROOM_LIGHT),
+                ("LINEABOVE", (0, 0), (-1, 0), 1, ONYX),
+                ("LINEBELOW", (0, 0), (-1, 0), 0.5, MUSHROOM),
+                ("LINEBELOW", (0, 1), (-1, -1), 0.5, DOVE),
+                ("TOPPADDING", (0, 0), (-1, -1), 7),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, MUSHROOM_LIGHT]),
             ]))
             story.append(mt)
-        story.append(Spacer(1, 14))
+        story.append(Spacer(1, 16))
 
-    # ── Stackability & Compatibility ──
-    story.append(_section_header("STACKABILITY & COMPATIBILITY", styles))
+    # Stackability & Compatibility — surfaces the program's actual
+    # excluded program ids (set in the wizard) on top of the type-level
+    # boilerplate from STACKING_INFO.
+    story.append(_section_header("Stackability & Compatibility", styles))
     story.append(Spacer(1, 8))
 
     if stacking.get("stackable_with"):
-        story.append(Paragraph(_spaced("Eligible for Stacking With"), styles["subsection_heading"]))
+        story.append(Paragraph("Eligible for Stacking With".upper(), styles["subsection_heading"]))
         for item in stacking["stackable_with"]:
             story.append(Paragraph(f"&bull; {item}", styles["bullet"]))
 
+    if excluded_programs:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Specific Programs Excluded".upper(), styles["subsection_heading"]))
+        for ep in excluded_programs:
+            story.append(Paragraph(f"&bull; {_format_program_summary(ep)}", styles["bullet"]))
+
     if stacking.get("not_stackable_with"):
         story.append(Spacer(1, 4))
-        story.append(Paragraph(_spaced("Not Stackable With"), styles["subsection_heading"]))
+        story.append(Paragraph("Generally Not Stackable With".upper(), styles["subsection_heading"]))
         for item in stacking["not_stackable_with"]:
             story.append(Paragraph(f"&bull; {item}", styles["bullet"]))
 
     if stacking.get("important_note"):
-        story.append(Spacer(1, 6))
+        story.append(Spacer(1, 8))
         story.append(_important_box(stacking["important_note"], styles))
     story.append(Spacer(1, 14))
 
     # ── Eligibility Requirements (for loyalty/conquest) ──
     if program.program_type == "loyalty" and stacking.get("eligibility_requirements"):
-        story.append(_section_header("ELIGIBILITY REQUIREMENTS", styles))
+        story.append(_section_header("Eligibility Requirements", styles))
         story.append(Spacer(1, 8))
         for req in stacking["eligibility_requirements"]:
             story.append(Paragraph(f"&bull; {req}", styles["bullet"]))
         if stacking.get("acceptable_documentation"):
             story.append(Spacer(1, 4))
-            story.append(Paragraph(_spaced("Acceptable Documentation"), styles["subsection_heading"]))
+            story.append(Paragraph("Acceptable Documentation".upper(), styles["subsection_heading"]))
             for doc_item in stacking["acceptable_documentation"]:
                 story.append(Paragraph(f"&#9702; {doc_item}", styles["sub_bullet"]))
         story.append(Spacer(1, 14))
 
     if program.program_type == "conquest" and stacking.get("conquest_brands"):
-        story.append(_section_header("CONQUEST ELIGIBILITY", styles))
+        story.append(_section_header("Conquest Eligibility", styles))
         story.append(Spacer(1, 8))
         story.append(Paragraph(
             "Customer must currently own or lease a 2018 model year or newer vehicle from the following:",
@@ -654,7 +852,7 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
 
     # ── Dealer Flexibility (for customer cash) ──
     if stacking.get("deal_flexibility"):
-        story.append(_section_header("DEALER FLEXIBILITY", styles))
+        story.append(_section_header("Dealer Flexibility", styles))
         story.append(Spacer(1, 8))
         story.append(Paragraph(stacking["deal_flexibility"], styles["body"]))
         story.append(Spacer(1, 14))
@@ -662,7 +860,7 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     # ══════════════ PAGE 2 content ══════════════
 
     # ── Administration & Rules ──
-    story.append(_section_header("ADMINISTRATION & RULES", styles))
+    story.append(_section_header("Administration & Rules", styles))
     story.append(Spacer(1, 8))
     admin_rules = [
         "Retailer must verify customer eligibility prior to applying incentive",
@@ -674,7 +872,7 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
         story.append(Paragraph(f"&bull; {rule_text}", styles["bullet"]))
     story.append(Spacer(1, 6))
 
-    story.append(Paragraph(_spaced("Program Notes"), styles["subsection_heading"]))
+    story.append(Paragraph("Program Notes".upper(), styles["subsection_heading"]))
     program_notes = [
         "Incentive may not be redeemed for cash",
         "Offer is non-transferable",
@@ -688,7 +886,7 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     story.append(Spacer(1, 14))
 
     # ── Additional Notes ──
-    story.append(_section_header("ADDITIONAL NOTES", styles))
+    story.append(_section_header("Additional Notes", styles))
     story.append(Spacer(1, 8))
     additional = [
         f"<b>New vehicles only:</b> Offers apply only to new, untitled {eligible_models.split(' INEOS')[0] if ' INEOS' in eligible_models else ''} model year vehicles",
@@ -703,18 +901,25 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     story.append(Spacer(1, 14))
 
     # ── Quick Reference ──
-    story.append(_section_header("QUICK REFERENCE", styles))
+    story.append(_section_header("Quick Reference", styles))
     story.append(Spacer(1, 8))
 
     deal_types = stacking.get("deal_types", "Applied at point of sale")
     stackable_str = ", ".join(stacking.get("stackable_with", [])[:3]) if stacking.get("stackable_with") else "N/A"
     not_stackable_str = ", ".join(stacking.get("not_stackable_with", [])[:3]) if stacking.get("not_stackable_with") else "N/A"
 
+    if excluded_programs:
+        not_stackable_str = (
+            (not_stackable_str + "; specifically: " + ", ".join(p.name for p in excluded_programs))
+            if not_stackable_str != "N/A"
+            else "specifically: " + ", ".join(p.name for p in excluded_programs)
+        )
+
     qr_rows = [
         ("Program", program.name),
         ("Effective Period", f"{eff_short} \u2013 {exp_short}"),
         ("Eligible Models", eligible_models),
-        (type_label.title(), f"{amount_str} per vehicle"),
+        (type_title, f"{amount_str} per vehicle"),
         ("Deal Types", deal_types),
         ("Stackable With", stackable_str),
         ("Not Stackable", not_stackable_str),
@@ -734,47 +939,29 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     # because that's relevant to internal readers too.
     public_facing = bool(getattr(program, "public_facing", True))
     if public_facing:
-        story.append(Paragraph(_spaced("Cash Offer Disclosures"), styles["disclaimer_heading"]))
+        story.append(Paragraph(f"{type_title} Disclosure".upper(), styles["disclaimer_heading"]))
         story.append(Spacer(1, 4))
 
-        # Generate per-model disclosures
-        body_styles_for_disclosure = ["Station Wagon", "Quartermaster"]
-        for rule in program.rules:
-            if rule.rule_type == "body_style":
-                vals = rule.value if isinstance(rule.value, list) else [rule.value]
-                body_styles_for_disclosure = [str(v).replace("_", " ").title() for v in vals]
-                break
-
-        model_years_for_disclosure = []
-        for rule in program.rules:
-            if rule.rule_type == "model_year":
-                vals = rule.value if isinstance(rule.value, list) else [rule.value]
-                model_years_for_disclosure = [str(v).replace("MY", "20") for v in vals]
-                break
-
-        if not model_years_for_disclosure:
-            model_years_for_disclosure = ["2025"]
-
-        for my in model_years_for_disclosure:
-            for bs in body_styles_for_disclosure:
-                disclosure = (
-                    f"<b>{amount_str} {type_label.title()} (National) \u2014 {my} INEOS Grenadier {bs}:</b> "
-                    f"Available on new models purchased {eff_short} through {exp_short}. "
-                    f"{type_label.title()} must be applied toward the final transaction price. "
-                )
-                if program.program_type == "customer_cash":
-                    disclosure += "Not available with special APR or Retail Finance offers. "
-                disclosure += (
-                    "Not redeemable for cash. May not be combined with other incompatible offers. "
-                    "Customer must take delivery and sign all required documents during the program period. "
-                    "Additional taxes, fees, and dealer-installed equipment may apply. "
-                    "Offer valid on in-stock vehicles only and subject to change without notice. "
-                    "Additional restrictions may apply. "
-                    "INEOS Automotive Americas, LLC reserves the right to modify or terminate this "
-                    "program at any time. See retailer for full details."
-                )
-                story.append(Paragraph(disclosure, styles["disclaimer"]))
-                story.append(Spacer(1, 4))
+        # One consolidated disclosure paragraph that lists every eligible
+        # MY x body combination at the top, then the boilerplate once. Was
+        # previously N near-identical paragraphs (one per combo) which
+        # bloated the bulletin to 3 pages of mostly-duplicate text.
+        body_labels = [b.replace("_", " ").title() for b in (_rule_values(program, "body_style") or ["station_wagon", "quartermaster"])]
+        my_labels = [m.replace("MY", "20") for m in (_rule_values(program, "model_year") or ["MY25", "MY26"])]
+        combos = ", ".join(f"{my} INEOS Grenadier {bs}" for my in my_labels for bs in body_labels)
+        not_apr_clause = " Not available with special APR or Retail Finance offers." if program.program_type == "customer_cash" else ""
+        disclosure = (
+            f"<b>{amount_str} {type_title} (National) — {combos}:</b> "
+            f"Available on new models purchased {eff_short} through {exp_short}. "
+            f"{type_title} must be applied toward the final transaction price.{not_apr_clause} "
+            "Not redeemable for cash. May not be combined with other incompatible offers. "
+            "Customer must take delivery and sign all required documents during the program period. "
+            "Additional taxes, fees, and dealer-installed equipment may apply. Offer valid on in-stock "
+            "vehicles only and subject to change without notice. Additional restrictions may apply. "
+            "INEOS Automotive Americas, LLC reserves the right to modify or terminate this program at "
+            "any time. See retailer for full details."
+        )
+        story.append(Paragraph(disclosure, styles["disclaimer"]))
     else:
         # Visible reminder so admins reviewing the doc know the
         # customer disclosures were intentionally suppressed.
@@ -789,10 +976,10 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
         styles["contact_note"],
     ))
 
-    # Footer
-    story.extend(_footer_block(1, styles))
-
-    doc.build(story)
+    # Footer is painted by _on_page_footer (page-template callback) so
+    # multi-page bulletins get correct page numbers — the previous
+    # _footer_block flowable always said "Page 1" on every page.
+    doc.build(story, onFirstPage=_on_page_footer, onLaterPages=_on_page_footer)
     return filepath
 
 
