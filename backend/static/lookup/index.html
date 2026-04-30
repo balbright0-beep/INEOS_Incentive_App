@@ -1615,7 +1615,7 @@
       { label: 'MY26 Station Wagon',         model_year: 'MY26', body_style: 'station_wagon' },
       { label: 'MY25 Quartermaster',         model_year: 'MY25', body_style: 'quartermaster' },
       { label: 'MY26 Quartermaster',         model_year: 'MY26', body_style: 'quartermaster' },
-      { label: 'MY25 Arcane Works Detour',   model_year: 'MY25', body_style: 'station_wagon', trim: 'Arcane Works Detour' },
+      { label: 'MY25 Arcane Works Detour',   model_year: 'MY25', body_style: 'station_wagon', special_edition: 'arcane_works_detour' },
     ];
 
     function activateTab(name) {
@@ -1702,6 +1702,7 @@
             model_year: s.model_year, body_style: s.body_style, tier: '1',
           });
           if (s.trim) params.set('trim', s.trim);
+          if (s.special_edition) params.set('special_edition', s.special_edition);
           const r = await fetch(`/api/lookup/rates/summary?${params}`);
           if (!r.ok) return { ...s, apr: [], lease: [] };
           const d = await r.json();

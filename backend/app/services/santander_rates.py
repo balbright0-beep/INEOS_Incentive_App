@@ -18,13 +18,17 @@ import glob
 from openpyxl import load_workbook
 
 
-# CPOS code to trim name mapping
+# CPOS code to trim name mapping. SVO is the rate-file shorthand for
+# the Arcane Works Detour special edition (also called "SVO" or
+# "Detour" in different reports) — same chassis as the Station Wagon
+# but a distinct model code (G13*) and a separate trim row.
 CPOS_TO_TRIM = {
     "BASE": "Base",
     "FIELD": "Fieldmaster",
     "BLACK": "Belstaff",
     "TRIAL": "Trialmaster",
     "HIGHL": "Highlands",
+    "SVO": "Arcane Works Detour",
 }
 
 
@@ -103,10 +107,25 @@ def _find_input_files(base_dir: str) -> dict:
 
 
 def _model_code_to_params(model_code: str) -> dict:
-    body = "station_wagon" if model_code.startswith("G01") else "quartermaster"
+    """Decode the rate-file model code into our (body_style, model_year,
+    special_edition) tuple.
+
+    Prefix mapping (observed in the Santander input files):
+      G01* -> Station Wagon (Base / Fieldmaster / Belstaff / Trialmaster / Highlands)
+      G09* -> Quartermaster
+      G13* -> Station Wagon, Arcane Works Detour special edition (CPOS=SVO)
+
+    Suffix encodes model year (last char): C = MY25, D = MY26.
+    """
+    if model_code.startswith("G01"):
+        body, special = "station_wagon", None
+    elif model_code.startswith("G13"):
+        body, special = "station_wagon", "arcane_works_detour"
+    else:
+        body, special = "quartermaster", None  # G09 + anything else
     suffix = model_code[-1] if model_code else "C"
     my = "MY26" if suffix == "D" else "MY25"
-    return {"body_style": body, "model_year": my}
+    return {"body_style": body, "model_year": my, "special_edition": special}
 
 
 def _to_date_str(v) -> str | None:
@@ -158,6 +177,7 @@ def _parse_apr_xlsx(data: bytes) -> list[dict]:
             "model_code": model_code,
             "body_style": params["body_style"],
             "model_year": params["model_year"],
+            "special_edition": params["special_edition"],
             "trim": trim,
             "apr": rate_val,
             "start_date": start_date,
@@ -212,6 +232,7 @@ def _parse_lease_xlsx(data: bytes) -> list[dict]:
             "model_code": model_code,
             "body_style": params["body_style"],
             "model_year": params["model_year"],
+            "special_edition": params["special_edition"],
             "trim": trim,
             "money_factor": mf_val,
             "money_factor_display": str(mf) if mf else "Std.",
@@ -318,12 +339,27 @@ def _pick_per_term_lease(matching: list[dict], state: str | None) -> dict[int, d
     return by_term
 
 
+def _filter_special_edition(rows: list[dict], special_edition: str | None) -> list[dict]:
+    """Special-edition lookups have to OPT IN to special-edition rows
+    so the regular SW lookup doesn't accidentally pull Arcane Works
+    Detour rates into its term ladder. None (default) = exclude any
+    rows with a special_edition set; a string = match only that
+    special_edition."""
+    if special_edition:
+        target = special_edition.lower()
+        return [r for r in rows if (r.get("special_edition") or "").lower() == target]
+    return [r for r in rows if not r.get("special_edition")]
+
+
 def get_apr_for_config(base_dir: str, model_year: str, body_style: str,
-                       tier: int = 1, trim: str = None, state: str = None) -> list[dict]:
+                       tier: int = 1, trim: str = None, state: str = None,
+                       special_edition: str = None) -> list[dict]:
     """Get APR rates. If state is given, prefer state-specific rows
     over national for each (term, tier); otherwise return national only.
-    Deduplicated by term."""
+    Deduplicated by term. By default special-edition rows (Arcane Works
+    Detour) are excluded — pass special_edition explicitly to get them."""
     all_rates = _filter_for_state(load_apr_rates(base_dir), state)
+    all_rates = _filter_special_edition(all_rates, special_edition)
     matching = [
         r for r in all_rates
         if r["model_year"] == model_year
@@ -338,10 +374,12 @@ def get_apr_for_config(base_dir: str, model_year: str, body_style: str,
 
 
 def get_lease_for_config(base_dir: str, model_year: str, body_style: str,
-                         tier: int = 1, trim: str = None, state: str = None) -> list[dict]:
+                         tier: int = 1, trim: str = None, state: str = None,
+                         special_edition: str = None) -> list[dict]:
     """Get lease rates. State preference + per-term dedup, matching
     get_apr_for_config."""
     all_rates = _filter_for_state(load_lease_rates(base_dir), state)
+    all_rates = _filter_special_edition(all_rates, special_edition)
     matching = [
         r for r in all_rates
         if r["model_year"] == model_year
@@ -356,10 +394,12 @@ def get_lease_for_config(base_dir: str, model_year: str, body_style: str,
 
 
 def get_all_lease_by_trim(base_dir: str, model_year: str, body_style: str,
-                          tier: int = 1, state: str = None) -> dict[str, list[dict]]:
+                          tier: int = 1, state: str = None,
+                          special_edition: str = None) -> dict[str, list[dict]]:
     """Get lease rates grouped by trim for comparison display.
     State-aware in the same way as get_lease_for_config."""
     all_rates = _filter_for_state(load_lease_rates(base_dir), state)
+    all_rates = _filter_special_edition(all_rates, special_edition)
     matching = [
         r for r in all_rates
         if r["model_year"] == model_year
