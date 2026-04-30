@@ -1703,13 +1703,6 @@
           .join(' ').toLowerCase();
         return hay.includes(search);
       });
-      const flagPills = (c) => {
-        const out = [];
-        if (c.loyalty_flag)  out.push('<span class="pill-tag flag-loyalty">Loyalty</span>');
-        if (c.conquest_flag) out.push('<span class="pill-tag flag-conquest">Conquest</span>');
-        if (c.special_flag)  out.push(`<span class="pill-tag">${escapeHtml(c.special_flag)}</span>`);
-        return out.join('') || '<span style="color:#9F9F9F">\u2014</span>';
-      };
       const layerCell = (layers) => (layers || []).map(l =>
         `<div style="display:flex;justify-content:space-between;gap:10px;padding:1px 0"><span style="color:#606060">${escapeHtml(l.program_name)}</span><span class="mono" style="color:#1D1D1D">${fmtMoney(l.layer_amount)}</span></div>`
       ).join('') || '<span style="color:#9F9F9F">\u2014</span>';
@@ -1718,7 +1711,6 @@
           <td class="mono"><b>${escapeHtml(c.code)}</b></td>
           <td>${escapeHtml((c.body_style || '').replace('_', ' '))}<div style="font-size:11px;color:#9F9F9F">${escapeHtml(c.model_year || '')}${c.trim ? ' \u00b7 ' + escapeHtml(c.trim) : ''}</div></td>
           <td>${escapeHtml((c.deal_type || '').toUpperCase())}</td>
-          <td>${flagPills(c)}</td>
           <td style="min-width:240px">${layerCell(c.layers)}</td>
           <td class="num"><b>${fmtMoney(c.support_amount)}</b></td>
         </tr>`).join('');
@@ -1728,8 +1720,8 @@
           <span style="font-size:11px;color:#9F9F9F;font-family:'JetBrains Mono',monospace">${filtered.length} of ${_codesCache.length} codes</span>
         </div>
         <table class="data-table">
-          <thead><tr><th>Code</th><th>Vehicle</th><th>Deal</th><th>Flags</th><th>Layers</th><th class="num">Total</th></tr></thead>
-          <tbody>${rows || '<tr><td colspan="6" class="panel-empty">No matches.</td></tr>'}</tbody>
+          <thead><tr><th>Code</th><th>Vehicle</th><th>Deal</th><th>Layers</th><th class="num">Total</th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="5" class="panel-empty">No matches.</td></tr>'}</tbody>
         </table>`;
       // Re-bind the input value after rerender so typing isn't disrupted
       const inp = $('codes-search');
