@@ -1,4 +1,5 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.schemas.lookup import (
@@ -487,3 +488,28 @@ def get_rates_summary(
 def list_states():
     """Return all US states for dropdown population."""
     return [{"value": s, "label": f"{s} - {STATE_NAMES[s]}"} for s in ALL_STATES]
+
+
+@router.post("/quote/pdf")
+def generate_customer_quote_pdf(deal: dict = Body(...), detail: str = "standard"):
+    """Render a customer-facing quote PDF from the wizard's current
+    deal context. Public endpoint — anyone with the public lookup can
+    export a quote for the configuration they just built. The deal
+    body is NOT persisted; the quote is generated, returned, and
+    forgotten.
+
+    detail accepts 'summary' | 'standard' | 'detailed' (defaults to
+    standard). Anything else falls back to standard."""
+    from app.services.quote_pdf import generate_quote_pdf
+    try:
+        pdf_bytes = generate_quote_pdf(deal or {}, detail=detail)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not generate quote: {e}")
+    veh = (deal or {}).get("vehicle") or {}
+    vin = (veh.get("vin") or "INEOS").strip().upper()
+    filename = f"INEOS_Grenadier_Quote_{vin[:8]}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

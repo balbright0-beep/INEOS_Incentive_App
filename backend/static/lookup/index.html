@@ -409,6 +409,22 @@
     }
     .deal-card.disabled .total { color: #9F9F9F; }
 
+    /* Calculator recalc button — flips to flare-red while inputs are
+       dirty so the user knows the displayed numbers don't reflect the
+       latest inputs. Subtle animation draws the eye. */
+    #recalc-btn {
+      transition: background-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    #recalc-btn.dirty {
+      background: #FF4639 !important;
+      box-shadow: 0 0 0 2px rgba(255, 70, 57, 0.18);
+      animation: pulseDirty 1.6s ease-in-out infinite;
+    }
+    @keyframes pulseDirty {
+      0%, 100% { box-shadow: 0 0 0 2px rgba(255, 70, 57, 0.18); }
+      50%      { box-shadow: 0 0 0 5px rgba(255, 70, 57, 0.04); }
+    }
+
     /* Wizard buttons */
     .btn-secondary {
       display: inline-flex;
@@ -1551,16 +1567,32 @@
           </div>
         </div>`;
 
+      // Recalc button — typing in any field flips _calc._dirty and adds
+      // the .dirty class via _markCalcDirty so the user sees that the
+      // numbers above need refreshing. Clicking does a focus-preserving
+      // rerender so scroll position survives.
+      const recalcBtn = `
+        <div style="text-align:right;margin-top:14px">
+          <button id="recalc-btn" type="button" onclick="_recalcCalc()"
+            style="background:#1D1D1D;color:#fff;border:0;padding:10px 18px;font-family:'JetBrains Mono',monospace;font-size:11.5px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;border-radius:5px;cursor:pointer">
+            <span class="recalc-label">Payment Up to Date</span>
+          </button>
+        </div>`;
       return `
         <div class="card fade-in" style="overflow:hidden">
-          <div style="background:#1D1D1D;color:#fff;padding:14px 22px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.1em;text-transform:uppercase;font-weight:600">
-            ${escapeHtml(dealLabel)} Payment Estimator
+          <div style="background:#1D1D1D;color:#fff;padding:14px 22px;font-family:'JetBrains Mono',monospace;font-size:12px;letter-spacing:0.1em;text-transform:uppercase;font-weight:600;display:flex;justify-content:space-between;align-items:center">
+            <span>${escapeHtml(dealLabel)} Payment Estimator</span>
+            <button id="export-quote-btn" type="button" onclick="_openExportDialog()"
+              style="background:#FF4639;color:#fff;border:0;padding:7px 14px;font-family:inherit;font-size:10.5px;letter-spacing:0.08em;text-transform:uppercase;font-weight:600;border-radius:4px;cursor:pointer">
+              Export Quote PDF
+            </button>
           </div>
           <div style="padding:22px">
             <div style="text-align:center;background:#FAFAF9;border-radius:6px;padding:18px;margin-bottom:18px">${hero}</div>
             ${dealCommonInputs}
             ${dealInputs}
-            <div style="border-top:1px solid #E9E8E5;padding-top:12px">
+            ${recalcBtn}
+            <div style="border-top:1px solid #E9E8E5;padding-top:12px;margin-top:14px">
               ${lineRows}
             </div>
             <p style="font-size:10.5px;color:#9F9F9F;margin:14px 0 0;line-height:1.5">
@@ -1582,9 +1614,8 @@
         try { caret = { start: active.selectionStart, end: active.selectionEnd }; } catch (_) { caret = null; }
       }
       const scrollY = window.scrollY;
+      _calc._dirty = false;
       _drawStep4();
-      // Restore scroll first so any focus() call later doesn't bring its
-      // element back into view (which would itself scroll).
       window.scrollTo({ top: scrollY, behavior: 'instant' });
       if (calcKey) {
         const next = document.querySelector('[data-calc-key="' + calcKey + '"]');
@@ -1597,6 +1628,23 @@
       }
     }
 
+    // Soft update — flip the "dirty" flag visible on the Recalc button so
+    // the user knows the displayed numbers don't reflect the latest
+    // input. Used by every text input (msrp/discount/.../tax_rate) so
+    // typing never triggers a panel rerender. Selects (term, mileage)
+    // still drive a full redraw via the term-change handlers below
+    // because their value display IS the rendered DOM and dropdowns
+    // don't have caret-position issues.
+    function _markCalcDirty() {
+      _calc._dirty = true;
+      const btn = document.getElementById('recalc-btn');
+      if (btn) {
+        btn.classList.add('dirty');
+        const lbl = btn.querySelector('.recalc-label');
+        if (lbl) lbl.textContent = 'Recalculate Payment';
+      }
+    }
+
     window._setCalc = function (key, value) {
       const num = ['msrp','discount','down','trade','dealer_fee','apr','money_factor','residual_pct','acq_fee','tax_rate'].includes(key);
       _calc[key] = num ? (parseFloat(value) || 0) : value;
@@ -1604,7 +1652,172 @@
       // so the hint label switches and the value isn't clobbered if the
       // ZIP fires again with a different state.
       if (key === 'tax_rate') _calc._taxFromZip = false;
+      _markCalcDirty();
+    };
+
+    window._recalcCalc = function () {
       _redrawCalcPreservingFocus();
+    };
+
+    // Export to customer-facing PDF flow
+    //
+    // The user picks a detail level in a small modal, the current
+    // wizard state (vehicle + selected programs + calc inputs) is
+    // posted to /api/lookup/quote/pdf, and the response binary is
+    // saved as a download.
+    window._openExportDialog = function () {
+      // Make sure the calculator numbers reflect the latest inputs
+      // before we let the user export — otherwise a "stale" calc
+      // gets shipped to the customer.
+      if (_calc._dirty) {
+        _redrawCalcPreservingFocus();
+      }
+      const existing = document.getElementById('export-modal');
+      if (existing) existing.remove();
+      const modal = document.createElement('div');
+      modal.id = 'export-modal';
+      modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:1000;display:flex;align-items:center;justify-content:center;padding:20px';
+      modal.innerHTML = `
+        <div style="background:#fff;border-radius:8px;max-width:480px;width:100%;padding:28px;box-shadow:0 12px 32px rgba(0,0,0,0.2)">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <h2 style="margin:0;font-size:18px;color:#1D1D1D">Export Customer Quote</h2>
+            <button type="button" onclick="document.getElementById('export-modal').remove()"
+              style="background:none;border:0;font-size:22px;color:#9F9F9F;cursor:pointer;line-height:1">×</button>
+          </div>
+          <p style="margin:6px 0 18px;font-size:13px;color:#606060">
+            Generate a branded PDF of this deal you can email or print for the customer. Pick the level of detail.
+          </p>
+          <div id="detail-options" style="display:flex;flex-direction:column;gap:10px;margin-bottom:18px">
+            ${[
+              {v:'summary',  t:'Summary',  d:'Vehicle hero + the headline number only (1 page).'},
+              {v:'standard', t:'Standard', d:'Adds the dealer pricing breakdown and program incentives.'},
+              {v:'detailed', t:'Detailed', d:'Adds APR / lease term details and every line item from the calculator.'},
+            ].map((o, i) => `
+              <label style="display:flex;gap:10px;padding:12px;border:1px solid #E9E8E5;border-radius:6px;cursor:pointer;align-items:flex-start" data-detail-row="${o.v}">
+                <input type="radio" name="detail-level" value="${o.v}" ${i === 1 ? 'checked' : ''} style="margin-top:3px;accent-color:#FF4639">
+                <div>
+                  <div style="font-weight:600;color:#1D1D1D;font-size:14px">${o.t}</div>
+                  <div style="font-size:12px;color:#606060;margin-top:2px">${o.d}</div>
+                </div>
+              </label>`).join('')}
+          </div>
+          <div style="margin-bottom:14px">
+            <label style="display:block;font-size:11px;font-weight:600;color:#606060;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px">Customer Name (optional)</label>
+            <input id="quote-customer-name" type="text" placeholder="e.g., Jane Smith"
+              style="width:100%;padding:9px 12px;border:1px solid #D9D7D0;border-radius:5px;font-size:14px">
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px">
+            <button type="button" onclick="document.getElementById('export-modal').remove()"
+              style="background:#fff;color:#1D1D1D;border:1px solid #D9D7D0;padding:10px 18px;border-radius:5px;cursor:pointer;font-size:13px">Cancel</button>
+            <button type="button" onclick="_downloadQuotePdf()"
+              style="background:#1D1D1D;color:#fff;border:0;padding:10px 18px;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600">Download PDF</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
+    };
+
+    window._downloadQuotePdf = async function () {
+      const detail = document.querySelector('input[name="detail-level"]:checked')?.value || 'standard';
+      const customerName = document.getElementById('quote-customer-name')?.value?.trim() || '';
+      const sel = _computeSelection();
+      const total = sel.total || 0;
+      const calc = _computePayment(total);
+      const r = _wizard.lookup || {};
+      const veh = _wizard.vehicle || {};
+      const vd = (vinActive && _vinData) ? _vinData : {};
+      const dt = _wizard.dealType || 'cash';
+
+      // Programs in the customer-facing list — only show name + amount.
+      const programs = (sel.eligible || [])
+        .filter(p => _selectedProgramIds.has(p.program_id))
+        .map(p => ({ name: p.program_name, amount: p.amount }));
+
+      // Pricing line items — same array shape the on-screen calculator
+      // uses, recomputed here so the PDF reflects the latest state.
+      const c = _calc;
+      let lines;
+      if (calc.kind === 'apr') {
+        lines = [
+          ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
+          ['Incentive Applied', -total], ['Down Payment', -c.down], ['Trade-In', -c.trade],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}%)`, calc.tax || 0],
+          ['Dealer Fee', c.dealer_fee], ['Amount Financed', calc.financed],
+        ];
+      } else if (calc.kind === 'lease') {
+        const basisLabel = calc.basis === 'full_price' ? 'full price' : 'depreciation';
+        lines = [
+          ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
+          ['Incentive Applied', -total], ['Down / Cap Reduction', -c.down], ['Trade-In', -c.trade],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}% on ${basisLabel})`, calc.tax || 0],
+          ['Acq Fee + Dealer Fee', c.acq_fee + c.dealer_fee], ['Adj. Cap Cost', calc.adjCap],
+          [`Residual (${calc.resPct}%)`, calc.residual],
+        ];
+      } else {
+        lines = [
+          ['MSRP', c.msrp], ['Dealer Discount', -c.discount], ['Selling Price', calc.sellingPrice],
+          ['Incentive Applied', -total], ['Down Payment', -c.down], ['Trade-In', -c.trade],
+          [`Sales Tax (${Number(c.tax_rate || 0).toFixed(2)}%)`, calc.tax || 0],
+          ['Dealer Fee', c.dealer_fee], ['Net Purchase Price', calc.net],
+        ];
+      }
+
+      const deal = {
+        deal_type: dt,
+        code: r.code || '',
+        customer_name: customerName,
+        vehicle: {
+          vin: veh.vin || vd.vin || null,
+          model_year: veh.model_year || vd.model_year || '',
+          body_style: veh.body_style || vd.body_style || '',
+          trim: veh.trim || vd.trim || '',
+          msrp: vd.msrp ?? Number(c.msrp || 0),
+          color_exterior: vd.color_exterior || null,
+          color_interior: vd.color_interior || null,
+          dealer_name: vd.dealer_name || null,
+        },
+        programs,
+        lines,
+        monthly: calc.monthly || 0,
+        net_price: calc.net || 0,
+        term_finance: c.term_finance || '',
+        apr: c.apr || '',
+        term_lease: c.term_lease || '',
+        money_factor: c.money_factor || '',
+        residual_pct: c.residual_pct || '',
+        mileage: c.mileage || 10000,
+        lender: 'Santander',
+      };
+
+      const btn = document.querySelector('#export-modal button[onclick="_downloadQuotePdf()"]');
+      const oldText = btn?.textContent;
+      if (btn) { btn.textContent = 'Generating…'; btn.disabled = true; }
+      try {
+        const resp = await fetch(`/api/lookup/quote/pdf?detail=${encodeURIComponent(detail)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(deal),
+        });
+        if (!resp.ok) {
+          const txt = await resp.text();
+          throw new Error(txt || ('Failed to generate quote (' + resp.status + ')'));
+        }
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const vinHint = (deal.vehicle.vin || 'INEOS').slice(0, 8).toUpperCase();
+        a.download = `INEOS_Grenadier_Quote_${vinHint}.pdf`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        document.getElementById('export-modal')?.remove();
+        toast('Quote downloaded');
+      } catch (err) {
+        toast(err.message || 'Could not generate quote', 'error');
+        if (btn) { btn.textContent = oldText; btn.disabled = false; }
+      }
     };
 
     window._onTermChangeApr = function () {
