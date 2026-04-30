@@ -1990,28 +1990,27 @@
           {step === 4 && lookup && (
             <div className="fade-in">
               <Card className="p-8 border-2 border-flare-red/20 mb-4 text-center">
-                {selection?.total === 0 && !selection?.noEligible ? (
-                  <>
-                    <div className="inline-block bg-silver-dust text-white px-7 py-3 rounded-lg mb-3">
-                      <span className="text-lg font-mono tracking-wider font-bold">NO INCENTIVE</span>
-                    </div>
-                    <p className="text-xs text-iron-smoke">Customer doesn't qualify for available programs.</p>
-                  </>
-                ) : (
-                  <>
-                    <p className="text-xs uppercase tracking-wider text-silver-dust mb-2 font-mono">Campaign Code to Enter in SAP</p>
-                    <div className="inline-block bg-onyx text-white px-8 py-4 rounded-lg mb-3">
-                      <span className="text-5xl font-bold tracking-widest font-mono">{lookup.code}</span>
-                    </div>
-                    <p className={`text-3xl font-bold ${selection?.total === 0 ? 'text-silver-dust' : 'text-success'}`}>${Number(selection?.total || 0).toLocaleString()}</p>
-                    <p className="text-xs text-silver-dust mt-1">
-                      {selection?.noEligible ? 'Base code for this deal type — no incentive programs apply'
-                        : selection?.totalChanged ? `Adjusted from default $${Number(lookup.total_support_amount).toLocaleString()} based on selection`
-                        : 'Total Support Amount'}
-                      {lookup.label ? ' · ' + lookup.label : ''}
-                    </p>
-                  </>
-                )}
+                {/* Always show the campaign code chip — even when total=0, lookup.code
+                    is the base code for the deal type (USCSWT/USASWT/USLSWT once the
+                    variant-swap clears loyalty/conquest flags from the empty selection),
+                    so the retailer always has a SAP code to enter. The sub-label tells
+                    them whether this is the auto-stack, an adjusted stack, or a
+                    base-code-only "customer not taking incentives" deal. */}
+                <p className="text-xs uppercase tracking-wider text-silver-dust mb-2 font-mono">Campaign Code to Enter in SAP</p>
+                <div className="inline-block bg-onyx text-white px-8 py-4 rounded-lg mb-3">
+                  <span className="text-5xl font-bold tracking-widest font-mono">{lookup.code}</span>
+                </div>
+                <p className={`text-3xl font-bold ${selection?.total === 0 ? 'text-silver-dust' : 'text-success'}`}>${Number(selection?.total || 0).toLocaleString()}</p>
+                <p className="text-xs text-silver-dust mt-1">
+                  {selection?.total === 0
+                    ? (selection?.noEligible
+                        ? 'Base code for this deal type — no incentive programs apply'
+                        : 'Base code for this deal type — customer not taking any available programs')
+                    : selection?.totalChanged
+                      ? `Adjusted from default $${Number(lookup.total_support_amount).toLocaleString()} based on selection`
+                      : 'Total Support Amount'}
+                  {lookup.label ? ' · ' + lookup.label : ''}
+                </p>
                 <div className="text-[11px] text-iron-smoke font-mono uppercase tracking-wider mt-3">
                   {lookup.model_year} · {(lookup.body_style || '').replace('_',' ').toUpperCase()} · {(lookup.deal_type || '').toUpperCase()}
                 </div>

@@ -1277,18 +1277,27 @@
       const sel = _computeSelection();
       const { eligible, total, conflictSet, noEligible, totalChanged } = sel;
 
-      const showNoIncentiveChip = total === 0 && !noEligible;
-      const codeBlock = showNoIncentiveChip
-        ? `<div style="display:inline-block;background:#9F9F9F;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
-             <span style="font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.08em;font-weight:600">NO INCENTIVE</span>
-           </div>
-           <p style="font-size:12.5px;color:#606060;margin-top:6px">Customer doesn't qualify for available programs.</p>`
-        : `<p class="eyebrow" style="margin:0 0 8px">Campaign Code to Enter in SAP</p>
-           <div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
-             <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
-           </div>
-           <p style="font-size:32px;font-weight:700;color:${total === 0 ? '#9F9F9F' : '#2C931E'};margin:0">${fmtMoney(total)}</p>
-           <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">${noEligible ? 'Base code for this deal type \u2014 no incentive programs apply' : totalChanged ? `Adjusted from default ${fmtMoney(r.total_support_amount)} based on selection` : 'Total Support Amount'}${r.label ? ' \u00b7 ' + escapeHtml(r.label) : ''}</p>`;
+      // Always show the campaign code chip \u2014 even when total=0. The
+      // backend's r.code is already the base code for the deal type
+      // (e.g., USLSWT for MY26 SW Lease) once the variant-swap logic
+      // has cleared loyalty/conquest flags from the empty selection,
+      // so the retailer always has something to enter in SAP. The
+      // sub-label below tells them whether incentives stacked, were
+      // adjusted, or are absent entirely.
+      const subLabel = total === 0
+        ? (noEligible
+            ? 'Base code for this deal type \u2014 no incentive programs apply'
+            : 'Base code for this deal type \u2014 customer not taking any available programs')
+        : (totalChanged
+            ? `Adjusted from default ${fmtMoney(r.total_support_amount)} based on selection`
+            : 'Total Support Amount');
+      const codeBlock = `
+        <p class="eyebrow" style="margin:0 0 8px">Campaign Code to Enter in SAP</p>
+        <div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
+        </div>
+        <p style="font-size:32px;font-weight:700;color:${total === 0 ? '#9F9F9F' : '#2C931E'};margin:0">${fmtMoney(total)}</p>
+        <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">${escapeHtml(subLabel)}${r.label ? ' \u00b7 ' + escapeHtml(r.label) : ''}</p>`;
 
       const conflictBanner = conflictSet.length
         ? `<div style="margin-bottom:12px;padding:10px 14px;background:#FEF2F2;border-left:3px solid #C4281D;border-radius:0 4px 4px 0;font-size:12.5px;color:#7F1D1D">
