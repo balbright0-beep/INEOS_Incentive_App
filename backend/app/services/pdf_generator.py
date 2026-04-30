@@ -606,6 +606,95 @@ def _resolve_excluded_programs(db: Session, program) -> list:
     return db.query(Program).filter(Program.id.in_(ids)).all()
 
 
+# Display labels for program types — keeps the matrix-derived list
+# readable even when the underlying enum is snake_case. Tracked
+# separately from STACKING_INFO descriptions because those are
+# human-readable categories ("Friends & Family") that don't 1:1
+# map to enum values.
+_PROGRAM_TYPE_LABELS = {
+    "customer_cash": "Customer Cash",
+    "bonus_cash": "Bonus Cash",
+    "apr_cash": "APR Cash",
+    "lease_cash": "Lease Cash",
+    "dealer_cash": "Dealer Cash",
+    "loyalty": "Loyalty",
+    "conquest": "Conquest",
+    "tactical": "Tactical / Special",
+    "cvp": "CVP",
+    "demonstrator": "Demonstrator",
+    "other": "Other",
+}
+
+
+def _live_stacking_compat(db: Session, program_type: str) -> tuple[list[str], list[str]]:
+    """Compute the live (stackable_with, not_stackable_with) program
+    types for a given program type by walking the StackingRule matrix
+    in the DB, instead of relying on the static STACKING_INFO dict.
+
+    Logic: this program_type can stack with another type when there
+    exists at least one deal_type where BOTH are allowed. So we look
+    up the deal types this program is allowed in, union the allowed-
+    types lists for those deals, and that's the stackable set. The
+    not-stackable set is everything else from the matrix.
+
+    Returns ([stackable type labels], [not stackable type labels])
+    sorted alphabetically. Used to surface a "Per current matrix"
+    annotation alongside the boilerplate STACKING_INFO copy so the
+    bulletin reflects admin-time changes to the matrix.
+    """
+    from app.services.stacking import get_stacking_matrix
+    matrix = get_stacking_matrix(db)
+    deal_types_for_self = [dt for dt, types in matrix.items() if program_type in types]
+    if not deal_types_for_self:
+        return [], []
+    stackable_types: set[str] = set()
+    for dt in deal_types_for_self:
+        stackable_types.update(matrix.get(dt, []))
+    stackable_types.discard(program_type)
+
+    all_types: set[str] = set()
+    for types in matrix.values():
+        all_types.update(types)
+    all_types.discard(program_type)
+    not_stackable_types = all_types - stackable_types
+
+    def label(t):
+        return _PROGRAM_TYPE_LABELS.get(t, t.replace("_", " ").title())
+    return (
+        sorted(label(t) for t in stackable_types),
+        sorted(label(t) for t in not_stackable_types),
+    )
+
+
+def _compute_important_note(program, stacking_info: dict, excluded_programs: list,
+                            live_not_stack: list[str]) -> str:
+    """Decide what the IMPORTANT callout should say. Three layers:
+
+    1. Per-program exclusions (most authoritative — admin set them in
+       the wizard for THIS program specifically).
+    2. Live matrix mismatch — when the boilerplate claims "fully
+       stackable" but the StackingRule matrix shows there ARE non-
+       stackable types, the boilerplate is wrong; substitute the
+       computed exclusions instead.
+    3. Otherwise: use the boilerplate from STACKING_INFO."""
+    if excluded_programs:
+        names = ", ".join(p.name for p in excluded_programs)
+        return (f"This program cannot be combined with: {names}. "
+                "Standard type-level stacking rules also apply.")
+
+    boilerplate = stacking_info.get("important_note", "")
+    # Detect the "fully stackable" boilerplate that conflicts with a
+    # non-empty matrix not-stack list. Word-fragment match keeps the
+    # detection forgiving — the boilerplate text could be tweaked
+    # without breaking this check.
+    is_fully_stackable_claim = "fully stackable" in boilerplate.lower()
+    if is_fully_stackable_claim and live_not_stack:
+        return (f"Per the current stacking matrix, this program cannot be combined "
+                f"with: {', '.join(live_not_stack)}. "
+                "All other program types stack normally.")
+    return boilerplate
+
+
 def _get_stacking_info(program_type):
     """Get stacking info for a program type, with fallback. Used as
     BASELINE descriptive language; the bulletin also surfaces the
@@ -741,6 +830,10 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     # Resolve program-specific stacking exclusions for use later (the
     # admin can pick specific other programs to exclude in the wizard).
     excluded_programs = _resolve_excluded_programs(db, program)
+    # Live compatibility from the StackingRule DB matrix — the bulletin
+    # surfaces this alongside the boilerplate STACKING_INFO copy so
+    # admin-time changes to the matrix actually flow through.
+    live_stack, live_not_stack = _live_stacking_compat(db, program.program_type)
     public_facing = bool(getattr(program, "public_facing", True))
 
     # Metadata
@@ -795,9 +888,18 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
             story.append(mt)
         story.append(Spacer(1, 16))
 
-    # Stackability & Compatibility — surfaces the program's actual
-    # excluded program ids (set in the wizard) on top of the type-level
-    # boilerplate from STACKING_INFO.
+    # Stackability & Compatibility — three layers of detail:
+    #   1. Boilerplate human-readable categories from STACKING_INFO
+    #      ("Loyalty programs", "Friends & Family programs") for
+    #      readability.
+    #   2. Live stacking matrix verification — the program TYPES that
+    #      currently allow this program per the StackingRule table.
+    #      Reflects admin-time changes that diverge from boilerplate.
+    #   3. Per-program exclusions from not_stackable_program_ids
+    #      (most authoritative — overrides the others).
+    # IMPORTANT note is computed: when explicit exclusions are set,
+    # the boilerplate "fully stackable" claim becomes misleading, so
+    # we replace it with the actual exclusion list.
     story.append(_section_header("Stackability & Compatibility", styles))
     story.append(Spacer(1, 8))
 
@@ -805,6 +907,13 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
         story.append(Paragraph("Eligible for Stacking With".upper(), styles["subsection_heading"]))
         for item in stacking["stackable_with"]:
             story.append(Paragraph(f"&bull; {item}", styles["bullet"]))
+
+    if live_stack:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"<i>Per current matrix:</i> {', '.join(live_stack)}",
+            styles["body"],
+        ))
 
     if excluded_programs:
         story.append(Spacer(1, 4))
@@ -818,9 +927,17 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
         for item in stacking["not_stackable_with"]:
             story.append(Paragraph(f"&bull; {item}", styles["bullet"]))
 
-    if stacking.get("important_note"):
+    if live_not_stack:
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"<i>Per current matrix:</i> {', '.join(live_not_stack)}",
+            styles["body"],
+        ))
+
+    important_text = _compute_important_note(program, stacking, excluded_programs, live_not_stack)
+    if important_text:
         story.append(Spacer(1, 8))
-        story.append(_important_box(stacking["important_note"], styles))
+        story.append(_important_box(important_text, styles))
     story.append(Spacer(1, 14))
 
     # ── Eligibility Requirements (for loyalty/conquest) ──
@@ -888,8 +1005,19 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     # ── Additional Notes ──
     story.append(_section_header("Additional Notes", styles))
     story.append(Spacer(1, 8))
+    # Build the "new vehicles only" line with the correct MY phrasing.
+    # Previous version concatenated `eligible_models.split(' INEOS')[0]`
+    # which returned "All model years" when no MY rule was set —
+    # producing "untitled All model years model year vehicles". Now
+    # builds from the actual rule list, omits the MY phrase entirely
+    # when the program targets all years.
+    my_codes = _rule_values(program, "model_year")
+    if my_codes:
+        my_phrase = ", ".join(my_codes) + " "
+    else:
+        my_phrase = ""
     additional = [
-        f"<b>New vehicles only:</b> Offers apply only to new, untitled {eligible_models.split(' INEOS')[0] if ' INEOS' in eligible_models else ''} model year vehicles",
+        f"<b>New vehicles only:</b> Offers apply only to new, untitled {my_phrase}INEOS Grenadier vehicles",
         "Standard eligibility rules, documentation requirements, and program audits apply",
         "No substitution, transfer, or retroactive application unless explicitly approved",
         "All incentive claims are subject to verification and audit by INEOS Automotive Americas, LLC",
@@ -924,8 +1052,12 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
         ("Stackable With", stackable_str),
         ("Not Stackable", not_stackable_str),
     ]
-    if stacking.get("important_note"):
-        qr_rows.append(("Key Rule", stacking["important_note"]))
+    # Use the same dynamic resolution as the IMPORTANT box so the Key
+    # Rule cell never claims "fully stackable" when the matrix says
+    # otherwise. Falls back to the boilerplate when nothing's wrong.
+    key_rule_text = _compute_important_note(program, stacking, excluded_programs, live_not_stack)
+    if key_rule_text:
+        qr_rows.append(("Key Rule", key_rule_text))
 
     story.append(_quick_reference_table(qr_rows, styles))
     story.append(Spacer(1, 16))
