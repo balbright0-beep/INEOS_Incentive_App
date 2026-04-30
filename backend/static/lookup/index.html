@@ -456,20 +456,16 @@
 
   <nav class="tab-nav">
     <div class="tab-nav-inner">
-      <a href="#find"     class="tab-link" data-tab="find">Find Incentive</a>
-      <a href="#programs" class="tab-link" data-tab="programs">Live Programs</a>
-      <a href="#codes"    class="tab-link" data-tab="codes">Campaign Codes</a>
-      <a href="#docs"     class="tab-link" data-tab="docs">Program Documents</a>
+      <a href="#find"      class="tab-link" data-tab="find">Find Incentive</a>
+      <a href="#santander" class="tab-link" data-tab="santander">Santander Offers</a>
+      <a href="#programs"  class="tab-link" data-tab="programs">Live Programs</a>
+      <a href="#codes"     class="tab-link" data-tab="codes">Campaign Codes</a>
+      <a href="#docs"      class="tab-link" data-tab="docs">Program Documents</a>
     </div>
   </nav>
 
   <main style="max-width:1200px;margin:0 auto;padding:32px 24px 48px">
     <section id="tab-find" class="tab-panel">
-    <!-- Santander headline offers — populated at page load from
-         /api/lookup/rates/summary. Hidden if no rate files have been
-         uploaded yet. -->
-    <div id="santander-summary" style="display:none;margin-bottom:24px"></div>
-
     <div style="margin-bottom:24px">
       <h1 style="font-size:28px;color:#1D1D1D;margin:0">Find Your Incentive</h1>
       <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:680px">
@@ -585,6 +581,18 @@
         </div>
       </div>
     </div>
+    </section>
+
+    <!-- ─── Santander Offers tab ─── -->
+    <section id="tab-santander" class="tab-panel">
+      <div style="margin-bottom:18px">
+        <h1 style="font-size:28px;color:#1D1D1D;margin:0">Santander Offers</h1>
+        <p style="font-size:14px;color:#606060;margin:8px 0 0;max-width:720px">
+          This month's published Santander finance and lease rates by term. Pulled live from the
+          uploaded monthly rate files; updates as soon as new programs are published.
+        </p>
+      </div>
+      <div id="santander-summary"></div>
     </section>
 
     <!-- ─── Live Programs tab ─── -->
@@ -1595,8 +1603,8 @@
     // Each tab lazy-loads its data on first show, then caches in memory
     // so flipping back is instant. Preserves ?preview=1 across tabs by
     // virtue of using the existing query string (we never rewrite it).
-    const TAB_IDS = ['find', 'programs', 'codes', 'docs'];
-    const _tabLoaded = { find: true, programs: false, codes: false, docs: false };
+    const TAB_IDS = ['find', 'santander', 'programs', 'codes', 'docs'];
+    const _tabLoaded = { find: true, santander: false, programs: false, codes: false, docs: false };
 
     function activateTab(name) {
       if (!TAB_IDS.includes(name)) name = 'find';
@@ -1606,9 +1614,10 @@
         if (panel) panel.classList.toggle('active', id === name);
         if (link)  link.classList.toggle('active', id === name);
       });
-      if (name === 'programs' && !_tabLoaded.programs) loadPrograms();
-      if (name === 'codes'    && !_tabLoaded.codes)    loadCodes();
-      if (name === 'docs'     && !_tabLoaded.docs)     loadDocs();
+      if (name === 'santander' && !_tabLoaded.santander) loadSantanderSummary();
+      if (name === 'programs'  && !_tabLoaded.programs)  loadPrograms();
+      if (name === 'codes'     && !_tabLoaded.codes)     loadCodes();
+      if (name === 'docs'      && !_tabLoaded.docs)      loadDocs();
       // Smooth scroll back to top so a long tab content doesn't leave
       // the user buried mid-page on switch.
       window.scrollTo({ top: 0, behavior: 'instant' });
@@ -1620,21 +1629,25 @@
     window.addEventListener('hashchange', () => activateTab(tabFromHash()));
     activateTab(tabFromHash());
 
-    // ───────────── Santander summary banner ─────────────
-    // Loads once on page enter and populates the #santander-summary
-    // div above the wizard with the month's headline APR + lease
-    // offers. Hidden when no rates are uploaded so the banner doesn't
-    // render an empty card.
-    (async () => {
+    // ───────────── Santander Offers tab ─────────────
+    // Lazy-loaded on first activation of the Santander tab. Populates
+    // #santander-summary with the month's headline APR + lease rates
+    // pulled from /api/lookup/rates/summary.
+    async function loadSantanderSummary() {
+      _tabLoaded.santander = true;
       const root = $('santander-summary');
       if (!root) return;
+      root.innerHTML = '<div class="panel-loading">Loading offers…</div>';
       try {
         const r = await fetch('/api/lookup/rates/summary?model_year=MY26&body_style=station_wagon&tier=1');
-        if (!r.ok) return;
+        if (!r.ok) throw new Error('Failed to load (' + r.status + ')');
         const d = await r.json();
         const aprRows = d.apr || [];
         const leaseRows = d.lease || [];
-        if (aprRows.length === 0 && leaseRows.length === 0) return;  // nothing to show
+        if (aprRows.length === 0 && leaseRows.length === 0) {
+          root.innerHTML = '<div class="panel-empty">No Santander rates uploaded yet. Check back after the next monthly publish.</div>';
+          return;
+        }
 
         const fmtDate = (iso) => {
           if (!iso) return null;
@@ -1655,7 +1668,7 @@
           : 'Current month';
 
         const aprList = aprRows.map(r => `
-          <div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:13px">
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
             <span style="color:#606060">${r.term}mo</span>
             <span class="mono" style="color:#1D1D1D;font-weight:600">${Number(r.apr).toFixed(2)}% APR</span>
           </div>`).join('');
@@ -1664,40 +1677,39 @@
           const mfTxt = r.money_factor != null ? `MF ${r.money_factor}` : 'Std. MF';
           const resTxt = r.residual_pct != null ? `${r.residual_pct}% res` : '';
           return `
-          <div style="display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:13px">
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
             <span style="color:#606060">${r.term}mo</span>
             <span class="mono" style="color:#1D1D1D;font-weight:600">${escapeHtml(mfTxt)}${resTxt ? ' · ' + escapeHtml(resTxt) : ''}</span>
           </div>`;
         }).join('');
 
         root.innerHTML = `
-          <div class="card" style="padding:20px 24px;background:linear-gradient(180deg,#FFFDF7 0%,#FFFFFF 100%);border:1px solid #E9E8E5">
-            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:14px;border-bottom:1px solid #E9E8E5;padding-bottom:12px">
+          <div class="card" style="padding:24px 28px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:18px;border-bottom:1px solid #E9E8E5;padding-bottom:14px">
               <div>
-                <div class="eyebrow" style="margin-bottom:2px">Santander Offers</div>
-                <h2 style="font-size:18px;color:#1D1D1D;margin:0">This Month's Finance &amp; Lease Rates</h2>
+                <div class="eyebrow" style="margin-bottom:2px">This Month's Headline Rates</div>
+                <h2 style="font-size:20px;color:#1D1D1D;margin:0">MY26 Station Wagon · Tier 1 Credit</h2>
               </div>
-              <div style="font-size:11.5px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">${escapeHtml(period)}</div>
+              <div style="font-size:12px;color:#606060;font-family:'JetBrains Mono',monospace;letter-spacing:0.04em">${escapeHtml(period)}</div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px">
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:32px">
               <div>
-                <div class="eyebrow" style="margin-bottom:6px;color:#1D1D1D">Finance (Retail APR)</div>
-                ${aprList || '<div style="font-size:12px;color:#9F9F9F;padding:6px 0">No published APR offers this month.</div>'}
+                <div class="eyebrow" style="margin-bottom:8px;color:#1D1D1D">Finance (Retail APR)</div>
+                ${aprList || '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published APR offers this month.</div>'}
               </div>
               <div>
-                <div class="eyebrow" style="margin-bottom:6px;color:#1D1D1D">Lease</div>
-                ${leaseList || '<div style="font-size:12px;color:#9F9F9F;padding:6px 0">No published lease offers this month.</div>'}
+                <div class="eyebrow" style="margin-bottom:8px;color:#1D1D1D">Lease</div>
+                ${leaseList || '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published lease offers this month.</div>'}
               </div>
             </div>
-            <p style="font-size:10.5px;color:#9F9F9F;margin:12px 0 0;line-height:1.5">
-              Tier 1 credit, MY26 Station Wagon. Rates vary by trim, term, and credit tier. State-specific subvention may apply — see the result page after a full lookup.
+            <p style="font-size:11px;color:#9F9F9F;margin:16px 0 0;line-height:1.5">
+              Rates vary by trim, term, and credit tier. State-specific subvention may apply — run a full lookup on the Find Incentive tab to see what applies to a specific deal. Programs are funded by Santander Consumer USA.
             </p>
           </div>`;
-        root.style.display = 'block';
-      } catch {
-        // silently hide on any error — banner is informational
+      } catch (e) {
+        root.innerHTML = `<div class="panel-empty" style="color:#CC0200">${escapeHtml(e.message || 'Failed to load')}</div>`;
       }
-    })();
+    }
 
     // When in admin preview mode, all the public tabs need to point at
     // the authenticated endpoints too — otherwise Programs/Codes/Docs
