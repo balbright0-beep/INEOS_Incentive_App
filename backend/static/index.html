@@ -693,6 +693,127 @@
       return out;
     }
 
+    // VIN list uploader for vin_specific programs. Replace-all
+    // semantics — uploading a new spreadsheet wipes the previous list.
+    // Renders an empty-state when no rows yet, plus inline controls to
+    // re-upload or clear. New programs (no id yet) show a hint to save
+    // first before uploading.
+    function VinListUploader({ programId, isEdit, toast }) {
+      const [summary, setSummary] = React.useState(null);
+      const [loading, setLoading] = React.useState(false);
+      const [uploading, setUploading] = React.useState(false);
+      const [warnings, setWarnings] = React.useState([]);
+      const fileRef = React.useRef(null);
+
+      const refresh = React.useCallback(() => {
+        if (!programId) return;
+        setLoading(true);
+        API.get(`/programs/${programId}/vins`)
+          .then(setSummary)
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      }, [programId]);
+
+      React.useEffect(() => { refresh(); }, [refresh]);
+
+      async function handleFile(e) {
+        const file = e.target.files?.[0];
+        if (!file || !programId) return;
+        setUploading(true);
+        setWarnings([]);
+        try {
+          const res = await API.upload(`/programs/${programId}/vins/upload`, file);
+          toast.show(`Uploaded ${res.uploaded} VINs`);
+          if (res.warnings?.length) setWarnings(res.warnings);
+          refresh();
+        } catch (err) {
+          toast.show(err.message || 'Upload failed', 'error');
+        } finally {
+          setUploading(false);
+          if (fileRef.current) fileRef.current.value = '';
+        }
+      }
+
+      async function handleClear() {
+        if (!programId) return;
+        if (!confirm('Remove every VIN from this program? The list can be re-uploaded.')) return;
+        try {
+          const res = await API.del(`/programs/${programId}/vins`);
+          toast.show(`Removed ${res.removed} VINs`);
+          setWarnings([]);
+          refresh();
+        } catch (err) {
+          toast.show(err.message || 'Clear failed', 'error');
+        }
+      }
+
+      if (!isEdit || !programId) {
+        return (
+          <div className="p-4 rounded border border-dashed border-flare-red/40 bg-flare-red/5 text-sm text-onyx">
+            <div className="font-semibold mb-1">VIN list upload</div>
+            <p className="text-iron-smoke">Save the program first (as a draft), then re-open it from the program list to upload the per-VIN rebate spreadsheet.</p>
+          </div>
+        );
+      }
+
+      const count = summary?.count ?? 0;
+      const sampleRows = (summary?.vins || []).slice(0, 5);
+
+      return (
+        <div className="p-4 rounded border border-dove bg-mushroom-light/60 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold uppercase tracking-wider text-onyx">VIN List</div>
+              <div className="text-xs text-iron-smoke mt-0.5">
+                Excel file with two columns: <strong>VIN</strong> and <strong>amount</strong> (header row required). Re-uploading replaces the existing list.
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-bold text-onyx leading-none">{count.toLocaleString()}</div>
+              <div className="text-xs text-iron-smoke">VINs covered</div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <label className="inline-flex items-center gap-2 px-3 py-1.5 rounded bg-onyx text-white text-sm font-medium cursor-pointer hover:bg-onyx/90">
+              <input ref={fileRef} type="file" accept=".xlsx,.xls" className="hidden" onChange={handleFile} disabled={uploading} />
+              {uploading ? 'Uploading…' : (count > 0 ? 'Replace VIN list' : 'Upload VIN list')}
+            </label>
+            {count > 0 && (
+              <button type="button" onClick={handleClear} className="text-xs text-flare-red hover:underline">
+                Clear all
+              </button>
+            )}
+            {loading && <span className="text-xs text-silver-dust">Loading…</span>}
+          </div>
+
+          {warnings.length > 0 && (
+            <div className="p-2 rounded bg-yellow-50 border border-yellow-200 text-xs text-yellow-900 space-y-0.5 max-h-32 overflow-y-auto">
+              <div className="font-semibold">{warnings.length} parse warning{warnings.length === 1 ? '' : 's'} (data was still saved):</div>
+              {warnings.slice(0, 10).map((w, i) => <div key={i}>• {w}</div>)}
+              {warnings.length > 10 && <div className="italic">… and {warnings.length - 10} more</div>}
+            </div>
+          )}
+
+          {count > 0 && (
+            <div className="text-xs text-iron-smoke">
+              <div className="font-medium mb-1">Sample (first {sampleRows.length} of {count.toLocaleString()}):</div>
+              <table className="w-full text-xs font-mono">
+                <tbody>
+                  {sampleRows.map(r => (
+                    <tr key={r.vin} className="border-b border-dove last:border-0">
+                      <td className="py-1">{r.vin}</td>
+                      <td className="py-1 text-right">${Number(r.amount).toLocaleString(undefined, {maximumFractionDigits: 0})}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function ProgramCreateModal({ onClose, editProgram }) {
       const toast = React.useContext(ToastContext);
       const isEdit = !!editProgram;
@@ -783,6 +904,9 @@
         lease_cash: { stackable: ['loyalty','conquest','bonus_cash','santander_lease','dealer_cash'], not_stackable: ['customer_cash','apr_subvention','cvp'] },
         // Dealer-funded incentive — stacks with all retail programs by default.
         dealer_cash: { stackable: ['customer_cash','bonus_cash','apr_cash','lease_cash','loyalty','conquest','tactical','santander_apr','santander_lease'], not_stackable: ['cvp'] },
+        // VIN-specific rebate — eligibility gated by per-VIN list.
+        // Stacks with all retail programs by default; not on CVP/Demo.
+        vin_specific: { stackable: ['customer_cash','bonus_cash','apr_cash','lease_cash','dealer_cash','loyalty','conquest','santander_apr','santander_lease'], not_stackable: ['cvp','demonstrator'] },
         loyalty: { stackable: ['customer_cash','apr_cash','lease_cash','conquest','friends_family','bonus_cash','costco','dealer_employee','dealer_cash'], not_stackable: [] },
         conquest: { stackable: ['customer_cash','loyalty','santander_apr','bonus_cash','dealer_cash'], not_stackable: ['cvp'] },
         cvp: { stackable: ['santander_cpo'], not_stackable: ['customer_cash','apr_subvention','lease_subvention','conquest','dealer_cash'] },
@@ -865,6 +989,7 @@
         { value: 'apr_cash', label: 'APR Cash' },
         { value: 'lease_cash', label: 'Lease Cash' },
         { value: 'dealer_cash', label: 'Dealer Cash' },
+        { value: 'vin_specific', label: 'VIN-Specific Rebate (Excel)' },
         { value: 'cvp', label: 'CVP (Courtesy Vehicle)' },
         { value: 'demonstrator', label: 'Demonstrator' },
         { value: 'loyalty', label: 'Loyalty Rebate' },
@@ -1113,10 +1238,28 @@
           )}
           {step === 4 && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <Input label="Per-Unit Amount ($)" type="number" value={form.per_unit_amount} onChange={e => update('per_unit_amount', e.target.value)} placeholder="e.g., 5000" />
-                <Input label="Total Budget ($)" type="number" value={form.budget_amount} onChange={e => update('budget_amount', e.target.value)} placeholder="e.g., 500000" />
-              </div>
+              {form.program_type === 'vin_specific' ? (
+                // vin_specific bypasses Per-Unit Amount entirely — each
+                // VIN's amount lives in the uploaded list, not on the
+                // program. The amount field stays present (hidden) so
+                // the existing payload shape remains unchanged.
+                <div className="grid grid-cols-1 gap-4">
+                  <Input label="Total Budget ($)" type="number" value={form.budget_amount} onChange={e => update('budget_amount', e.target.value)} placeholder="e.g., 500000" />
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <Input label="Per-Unit Amount ($)" type="number" value={form.per_unit_amount} onChange={e => update('per_unit_amount', e.target.value)} placeholder="e.g., 5000" />
+                  <Input label="Total Budget ($)" type="number" value={form.budget_amount} onChange={e => update('budget_amount', e.target.value)} placeholder="e.g., 500000" />
+                </div>
+              )}
+
+              {form.program_type === 'vin_specific' && (
+                <VinListUploader
+                  programId={isEdit ? editProgram.id : null}
+                  isEdit={isEdit}
+                  toast={toast}
+                />
+              )}
 
               <div className="p-4 bg-mushroom-light rounded border border-dove space-y-2">
                 <h4 className="font-semibold text-sm uppercase tracking-wider text-onyx mb-3">Program Review</h4>
@@ -1124,7 +1267,9 @@
                   <p><span className="text-silver-dust">Name:</span> <strong>{form.name}</strong></p>
                   <p><span className="text-silver-dust">Type:</span> <strong>{form.program_type.replace('_', ' ')}</strong></p>
                   <p><span className="text-silver-dust">Period:</span> <strong>{form.effective_date} to {form.expiration_date}</strong></p>
-                  <p><span className="text-silver-dust">Per Unit:</span> <strong>${form.per_unit_amount || 0}</strong></p>
+                  {form.program_type !== 'vin_specific' && (
+                    <p><span className="text-silver-dust">Per Unit:</span> <strong>${form.per_unit_amount || 0}</strong></p>
+                  )}
                   <p><span className="text-silver-dust">Budget:</span> <strong>${form.budget_amount || 'No cap'}</strong></p>
                   <p><span className="text-silver-dust">Rules:</span> <strong>{buildRules().length} eligibility rules</strong></p>
                   <p><span className="text-silver-dust">Audience:</span> <strong>{form.public_facing === false ? 'Internal-only (no customer disclosures)' : 'Public-facing'}</strong></p>

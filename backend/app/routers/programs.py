@@ -1,10 +1,10 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
 from app.database import get_db
-from app.models.program import Program, ProgramRule
+from app.models.program import Program, ProgramRule, ProgramVin
 from app.models.budget import Budget, AuditLog
 from app.models.transaction import DealTransaction
 from app.models.campaign_code import CampaignCodeLayer
@@ -12,12 +12,27 @@ from app.schemas.program import ProgramCreate, ProgramUpdate, ProgramResponse
 from app.auth.security import get_current_user, require_admin
 from app.models.user import User
 from app.services.code_matrix import rebuild_matrix
+from app.services.vin_list import parse_vin_list
 
 router = APIRouter(prefix="/api/programs", tags=["programs"])
 
 
 def _enrich_program(db: Session, prog: Program) -> dict:
     """Add computed fields to program response."""
+    # VIN list summary for vin_specific programs — count + amount range
+    # let the SPA show a one-line summary on the list page without
+    # paginating the full VIN dataset.
+    vin_summary = None
+    if prog.program_type == "vin_specific":
+        vin_rows = db.query(ProgramVin.amount).filter(ProgramVin.program_id == prog.id).all()
+        amounts = [float(a[0]) for a in vin_rows]
+        vin_summary = {
+            "count": len(amounts),
+            "min_amount": min(amounts) if amounts else 0.0,
+            "max_amount": max(amounts) if amounts else 0.0,
+            "total_amount": sum(amounts),
+        }
+
     # Calculate spend and units
     code_ids = [l.campaign_code_id for l in db.query(CampaignCodeLayer.campaign_code_id).filter(
         CampaignCodeLayer.program_id == prog.id
@@ -74,6 +89,7 @@ def _enrich_program(db: Session, prog: Program) -> dict:
                     for b in prog.budgets],
         "spend_to_date": spend,
         "units_to_date": units,
+        "vin_summary": vin_summary,
     }
     return data
 
@@ -446,3 +462,125 @@ def delete_program(
     db.delete(prog)
     db.commit()
     return {"message": "Program deleted"}
+
+
+# ── VIN-specific program: per-VIN amount list endpoints ──
+#
+# Used only by program_type='vin_specific'. Replace-all upload
+# semantics: each successful POST wipes the program's existing rows
+# and writes the new list in a single transaction. That matches how
+# admins think about the source spreadsheet ("upload the latest MSRP
+# REBATE.xlsx") and avoids a partial-state bug where a botched merge
+# leaves stale VINs in the table.
+
+@router.get("/{program_id}/vins")
+def list_program_vins(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return all VIN+amount rows for a vin_specific program. Sorted
+    by VIN for stable display. Returns an empty list (200, not 404)
+    when the program is vin_specific but has no rows yet — the SPA
+    uses this as the "show empty-state, prompt for upload" signal."""
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    rows = (
+        db.query(ProgramVin)
+        .filter(ProgramVin.program_id == program_id)
+        .order_by(ProgramVin.vin)
+        .all()
+    )
+    return {
+        "program_id": program_id,
+        "program_type": prog.program_type,
+        "count": len(rows),
+        "vins": [{"vin": r.vin, "amount": float(r.amount)} for r in rows],
+    }
+
+
+@router.post("/{program_id}/vins/upload")
+async def upload_program_vins(
+    program_id: str,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Replace the program's VIN list from an uploaded Excel workbook.
+    Accepts the canonical 2-column shape (VIN, amount) — the parser
+    auto-detects which column is which by header keyword, so the source
+    spreadsheet doesn't need to be reformatted before upload."""
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    if prog.program_type != "vin_specific":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot upload VINs to a {prog.program_type} program (vin_specific only).",
+        )
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    try:
+        rows, warnings = parse_vin_list(contents)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Could not parse workbook: {e}")
+
+    if not rows:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid VIN rows found in workbook. " + (
+                f"Warnings: {'; '.join(warnings[:5])}" if warnings else ""
+            ),
+        )
+
+    # Replace-all: drop the old set, write the new one in one tx so a
+    # parser failure halfway through the upload can't strand the
+    # program with a half-replaced list.
+    db.query(ProgramVin).filter(ProgramVin.program_id == program_id).delete()
+    for r in rows:
+        db.add(ProgramVin(
+            program_id=program_id,
+            vin=r["vin"],
+            amount=Decimal(str(r["amount"])),
+        ))
+    db.add(AuditLog(
+        entity_type="program", entity_id=program_id,
+        action="vin_list_uploaded", user_id=user.id,
+        details={
+            "filename": file.filename,
+            "row_count": len(rows),
+            "warning_count": len(warnings),
+        },
+    ))
+    db.commit()
+    return {
+        "program_id": program_id,
+        "uploaded": len(rows),
+        "warnings": warnings,
+        "filename": file.filename,
+    }
+
+
+@router.delete("/{program_id}/vins")
+def clear_program_vins(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Remove every VIN row for a vin_specific program. Useful when
+    the admin wants a fresh slate before re-uploading."""
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    deleted = db.query(ProgramVin).filter(ProgramVin.program_id == program_id).delete()
+    db.add(AuditLog(
+        entity_type="program", entity_id=program_id,
+        action="vin_list_cleared", user_id=user.id,
+        details={"removed": deleted},
+    ))
+    db.commit()
+    return {"program_id": program_id, "removed": deleted}

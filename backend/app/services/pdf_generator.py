@@ -24,7 +24,7 @@ from reportlab.platypus import (
     HRFlowable, KeepTogether, ListFlowable, ListItem,
 )
 from sqlalchemy.orm import Session
-from app.models.program import Program
+from app.models.program import Program, ProgramVin
 from app.models.campaign_code import CampaignCode, CampaignCodeLayer
 from app.config import settings
 
@@ -205,6 +205,25 @@ STACKING_INFO = {
         ],
         "important_note": "Tactical programs may have unique stacking rules. Consult your RBM for details.",
         "deal_types": "Per program guidelines",
+    },
+    "vin_specific": {
+        "stackable_with": [
+            "All national and regional retail programs",
+            "Customer Cash, APR Cash, Lease Cash",
+            "Dealer Cash",
+            "Loyalty and Conquest programs",
+            "Santander subvented APR / Lease",
+        ],
+        "not_stackable_with": [
+            "CVP",
+            "Demonstrator",
+        ],
+        "important_note": (
+            "Eligibility is gated by VIN — only the units in the program's "
+            "VIN list qualify. Per-VIN amounts vary; the calculator pulls "
+            "the correct value when an eligible VIN is entered."
+        ),
+        "deal_types": "All deal types (Cash, APR, Lease)",
     },
 }
 
@@ -617,6 +636,7 @@ _PROGRAM_TYPE_LABELS = {
     "apr_cash": "APR Cash",
     "lease_cash": "Lease Cash",
     "dealer_cash": "Dealer Cash",
+    "vin_specific": "VIN-Specific Rebate",
     "loyalty": "Loyalty",
     "conquest": "Conquest",
     "tactical": "Tactical / Special",
@@ -702,12 +722,17 @@ def _get_stacking_info(program_type):
     return STACKING_INFO.get(program_type, STACKING_INFO.get("tactical", {}))
 
 
-def _stats_for_program(program):
+def _stats_for_program(program, vin_summary: dict | None = None):
     """Build the 3-up stat callouts from the program's actual rules.
     Previously these were hardcoded per type — a SW-only customer-cash
     program incorrectly showed both bodies at the same amount because
     body_style rules weren't consulted. Now the stats reflect what
-    the program is actually targeting."""
+    the program is actually targeting.
+
+    vin_summary — optional aggregate from ProgramVin (count + amount
+    range). Required for vin_specific programs because the per-unit
+    amount on Program is meaningless for that type; the real numbers
+    live in the per-VIN rows."""
     amount = float(program.per_unit_amount or 0)
     amount_str = f"${amount:,.0f}"
     type_label = (program.program_type or "").replace("_", " ").title()
@@ -720,6 +745,29 @@ def _stats_for_program(program):
         period_str = f"{eff.strftime('%b %d')} – {exp.strftime('%b %d, %Y')}"
 
     pt = program.program_type
+    if pt == "vin_specific":
+        # Numbers come from the per-VIN list, not Program.per_unit_amount.
+        # When the list is empty (program created but list not yet
+        # uploaded) we still show the box so the bulletin layout is
+        # consistent — just with "—" placeholders.
+        s = vin_summary or {}
+        count = int(s.get("count", 0) or 0)
+        lo = float(s.get("min_amount", 0) or 0)
+        hi = float(s.get("max_amount", 0) or 0)
+        if count == 0:
+            range_str = "—"
+            range_sub = "no VINs uploaded yet"
+        elif abs(lo - hi) < 0.01:
+            range_str = f"${lo:,.0f}"
+            range_sub = "uniform per VIN"
+        else:
+            range_str = f"${lo:,.0f} – ${hi:,.0f}"
+            range_sub = "varies by VIN"
+        return [
+            ("Eligible VINs", f"{count:,}", "see VIN list"),
+            ("Rebate Range", range_str, range_sub),
+            ("Effective", period_str or "—", "current cycle"),
+        ]
 
     if pt in ("customer_cash", "bonus_cash", "dealer_cash", "apr_cash", "lease_cash"):
         # Per-deal-type cash incentive — show amount + scope + period.
@@ -809,7 +857,11 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
 
     story = []
     type_label = program.program_type.replace("_", " ").upper()
-    type_title = type_label.title()
+    # Prefer the friendly display label (e.g. "VIN-Specific Rebate"
+    # over "Vin Specific") when one's defined for the program type;
+    # falls back to title-cased snake-case for any types that haven't
+    # been added to _PROGRAM_TYPE_LABELS yet.
+    type_title = _PROGRAM_TYPE_LABELS.get(program.program_type, type_label.title())
     month_year = program.effective_date.strftime("%B %Y") if program.effective_date else ""
     eff = program.effective_date.strftime("%B %d, %Y") if program.effective_date else ""
     exp = program.expiration_date.strftime("%B %d, %Y") if program.expiration_date else ""
@@ -836,6 +888,26 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     live_stack, live_not_stack = _live_stacking_compat(db, program.program_type)
     public_facing = bool(getattr(program, "public_facing", True))
 
+    # VIN-list aggregate for vin_specific programs. Loaded once here
+    # so the stat box, the VIN coverage section, and the appendix all
+    # share the same data without re-querying.
+    vin_summary = None
+    vin_rows = []
+    if program.program_type == "vin_specific":
+        vin_rows = (
+            db.query(ProgramVin)
+            .filter(ProgramVin.program_id == program.id)
+            .order_by(ProgramVin.vin)
+            .all()
+        )
+        amounts = [float(r.amount) for r in vin_rows]
+        vin_summary = {
+            "count": len(amounts),
+            "min_amount": min(amounts) if amounts else 0.0,
+            "max_amount": max(amounts) if amounts else 0.0,
+            "total_amount": sum(amounts),
+        }
+
     # Metadata
     story.append(_meta_row("Region", "United States of America", styles))
     story.append(_meta_row("For Attention", "Dealer Principal, General Manager, Sales &amp; F&amp;I Managers", styles))
@@ -853,8 +925,71 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
     # Stat callouts — built from the program's actual rules so a
     # SW-only customer-cash program no longer shows both bodies at
     # the same amount, etc.
-    story.append(_stat_boxes(_stats_for_program(program), styles))
+    story.append(_stat_boxes(_stats_for_program(program, vin_summary), styles))
     story.append(Spacer(1, 18))
+
+    # VIN COVERAGE — per-VIN rebate breakdown for vin_specific programs.
+    # Shows the count, total program value, and an inline VIN list when
+    # the count is small enough to fit. Larger lists get a "see SPA"
+    # pointer so the bulletin doesn't bloat to dozens of pages — the
+    # full list is always queryable via the admin UI.
+    if program.program_type == "vin_specific":
+        story.append(_section_header("VIN Coverage", styles))
+        story.append(Spacer(1, 8))
+        if vin_summary and vin_summary.get("count"):
+            count = vin_summary["count"]
+            total = vin_summary.get("total_amount", 0)
+            story.append(Paragraph(
+                f"<b>{count:,}</b> VINs covered &middot; total program value "
+                f"<b>${total:,.0f}</b>. Per-VIN amounts vary by unit; the "
+                "calculator pulls the right rebate when an eligible VIN is entered.",
+                styles["body"],
+            ))
+            # Inline list when small enough to be useful in the doc.
+            # Threshold of 60 keeps even the densest list under a single
+            # page worth of two-column rows; anything larger gets the
+            # pointer instead.
+            if count <= 60:
+                story.append(Spacer(1, 8))
+                story.append(Paragraph("Eligible VINs".upper(), styles["subsection_heading"]))
+                # 2-column layout: VIN | amount, alternating rows for scan
+                inline_rows = [[
+                    Paragraph("<b>VIN</b>", styles["body_bold"]),
+                    Paragraph("<b>Rebate</b>", styles["body_bold"]),
+                ]]
+                for r in vin_rows:
+                    inline_rows.append([
+                        Paragraph(r.vin, styles["body"]),
+                        Paragraph(f"${float(r.amount):,.0f}", styles["body"]),
+                    ])
+                vt = Table(inline_rows, colWidths=[4.7 * inch, 2.3 * inch])
+                vt.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, 0), MUSHROOM_LIGHT),
+                    ("LINEABOVE", (0, 0), (-1, 0), 1, ONYX),
+                    ("LINEBELOW", (0, 0), (-1, 0), 0.5, MUSHROOM),
+                    ("LINEBELOW", (0, 1), (-1, -1), 0.5, DOVE),
+                    ("TOPPADDING", (0, 0), (-1, -1), 6),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 10),
+                    ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, MUSHROOM_LIGHT]),
+                ]))
+                story.append(vt)
+            else:
+                story.append(Spacer(1, 6))
+                story.append(Paragraph(
+                    f"<i>Full VIN list ({count:,} entries) available in the "
+                    "admin Incentive Dashboard. The calculator validates each "
+                    "VIN at deal entry and returns its specific rebate.</i>",
+                    styles["body"],
+                ))
+        else:
+            story.append(Paragraph(
+                "<i>No VINs uploaded for this program yet. Upload the VIN "
+                "list from the program edit screen to activate the rebate.</i>",
+                styles["body"],
+            ))
+        story.append(Spacer(1, 16))
 
     # AMOUNT BY MODEL — every (model_year x body_style) the program targets,
     # built from the actual rules. Now applies to every cash-type program
@@ -1043,15 +1178,38 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
             else "specifically: " + ", ".join(p.name for p in excluded_programs)
         )
 
-    qr_rows = [
-        ("Program", program.name),
-        ("Effective Period", f"{eff_short} \u2013 {exp_short}"),
-        ("Eligible Models", eligible_models),
-        (type_title, f"{amount_str} per vehicle"),
-        ("Deal Types", deal_types),
-        ("Stackable With", stackable_str),
-        ("Not Stackable", not_stackable_str),
-    ]
+    # Quick Reference fields differ for vin_specific because Per-Unit
+    # Amount is meaningless (each VIN has its own number) and Eligible
+    # Models is replaced by the VIN-list summary.
+    if program.program_type == "vin_specific" and vin_summary:
+        if vin_summary.get("count"):
+            lo = vin_summary.get("min_amount", 0)
+            hi = vin_summary.get("max_amount", 0)
+            if abs(lo - hi) < 0.01:
+                amount_cell = f"${lo:,.0f} per VIN ({vin_summary['count']:,} VINs)"
+            else:
+                amount_cell = f"${lo:,.0f} \u2013 ${hi:,.0f} per VIN ({vin_summary['count']:,} VINs)"
+        else:
+            amount_cell = "VIN list not yet uploaded"
+        qr_rows = [
+            ("Program", program.name),
+            ("Effective Period", f"{eff_short} \u2013 {exp_short}"),
+            ("Eligibility", "Per-VIN list (see VIN Coverage)"),
+            (type_title, amount_cell),
+            ("Deal Types", deal_types),
+            ("Stackable With", stackable_str),
+            ("Not Stackable", not_stackable_str),
+        ]
+    else:
+        qr_rows = [
+            ("Program", program.name),
+            ("Effective Period", f"{eff_short} \u2013 {exp_short}"),
+            ("Eligible Models", eligible_models),
+            (type_title, f"{amount_str} per vehicle"),
+            ("Deal Types", deal_types),
+            ("Stackable With", stackable_str),
+            ("Not Stackable", not_stackable_str),
+        ]
     # Use the same dynamic resolution as the IMPORTANT box so the Key
     # Rule cell never claims "fully stackable" when the matrix says
     # otherwise. Falls back to the boilerplate when nothing's wrong.
@@ -1074,26 +1232,54 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
         story.append(Paragraph(f"{type_title} Disclosure".upper(), styles["disclaimer_heading"]))
         story.append(Spacer(1, 4))
 
-        # One consolidated disclosure paragraph that lists every eligible
-        # MY x body combination at the top, then the boilerplate once. Was
-        # previously N near-identical paragraphs (one per combo) which
-        # bloated the bulletin to 3 pages of mostly-duplicate text.
-        body_labels = [b.replace("_", " ").title() for b in (_rule_values(program, "body_style") or ["station_wagon", "quartermaster"])]
-        my_labels = [m.replace("MY", "20") for m in (_rule_values(program, "model_year") or ["MY25", "MY26"])]
-        combos = ", ".join(f"{my} INEOS Grenadier {bs}" for my in my_labels for bs in body_labels)
-        not_apr_clause = " Not available with special APR or Retail Finance offers." if program.program_type == "customer_cash" else ""
-        disclosure = (
-            f"<b>{amount_str} {type_title} (National) — {combos}:</b> "
-            f"Available on new models purchased {eff_short} through {exp_short}. "
-            f"{type_title} must be applied toward the final transaction price.{not_apr_clause} "
-            "Not redeemable for cash. May not be combined with other incompatible offers. "
-            "Customer must take delivery and sign all required documents during the program period. "
-            "Additional taxes, fees, and dealer-installed equipment may apply. Offer valid on in-stock "
-            "vehicles only and subject to change without notice. Additional restrictions may apply. "
-            "INEOS Automotive Americas, LLC reserves the right to modify or terminate this program at "
-            "any time. See retailer for full details."
-        )
-        story.append(Paragraph(disclosure, styles["disclaimer"]))
+        if program.program_type == "vin_specific":
+            # vin_specific can't print "$X (National) — MY25 ... MY26 ..."
+            # because the amount varies by VIN. Disclosure has to be
+            # framed in terms of the VIN list and the range.
+            count = (vin_summary or {}).get("count", 0)
+            lo = (vin_summary or {}).get("min_amount", 0)
+            hi = (vin_summary or {}).get("max_amount", 0)
+            if count and abs(lo - hi) < 0.01:
+                amount_phrase = f"${lo:,.0f}"
+            elif count:
+                amount_phrase = f"${lo:,.0f}–${hi:,.0f}"
+            else:
+                amount_phrase = "varies"
+            disclosure = (
+                f"<b>{type_title} ({amount_phrase}) — Per-VIN Eligibility:</b> "
+                f"Rebate is available only on the {count:,} specific VINs included in this "
+                f"program from {eff_short} through {exp_short}. The rebate amount varies by "
+                "VIN as published in the program's VIN list. "
+                "Rebate must be applied toward the final transaction price. "
+                "Not redeemable for cash. May not be combined with other incompatible offers. "
+                "Customer must take delivery and sign all required documents during the program period. "
+                "Additional taxes, fees, and dealer-installed equipment may apply. Offer valid only on the "
+                "specific in-stock VINs published with this program; subject to change without notice. "
+                "Additional restrictions may apply. INEOS Automotive Americas, LLC reserves the right to "
+                "modify or terminate this program at any time. See retailer for full details."
+            )
+            story.append(Paragraph(disclosure, styles["disclaimer"]))
+        else:
+            # One consolidated disclosure paragraph that lists every eligible
+            # MY x body combination at the top, then the boilerplate once. Was
+            # previously N near-identical paragraphs (one per combo) which
+            # bloated the bulletin to 3 pages of mostly-duplicate text.
+            body_labels = [b.replace("_", " ").title() for b in (_rule_values(program, "body_style") or ["station_wagon", "quartermaster"])]
+            my_labels = [m.replace("MY", "20") for m in (_rule_values(program, "model_year") or ["MY25", "MY26"])]
+            combos = ", ".join(f"{my} INEOS Grenadier {bs}" for my in my_labels for bs in body_labels)
+            not_apr_clause = " Not available with special APR or Retail Finance offers." if program.program_type == "customer_cash" else ""
+            disclosure = (
+                f"<b>{amount_str} {type_title} (National) — {combos}:</b> "
+                f"Available on new models purchased {eff_short} through {exp_short}. "
+                f"{type_title} must be applied toward the final transaction price.{not_apr_clause} "
+                "Not redeemable for cash. May not be combined with other incompatible offers. "
+                "Customer must take delivery and sign all required documents during the program period. "
+                "Additional taxes, fees, and dealer-installed equipment may apply. Offer valid on in-stock "
+                "vehicles only and subject to change without notice. Additional restrictions may apply. "
+                "INEOS Automotive Americas, LLC reserves the right to modify or terminate this program at "
+                "any time. See retailer for full details."
+            )
+            story.append(Paragraph(disclosure, styles["disclaimer"]))
     else:
         # Visible reminder so admins reviewing the doc know the
         # customer disclosures were intentionally suppressed.

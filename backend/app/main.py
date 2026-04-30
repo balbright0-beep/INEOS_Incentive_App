@@ -48,6 +48,20 @@ def _ensure_program_type_dealer_cash_value() -> None:
         conn.execute(text("ALTER TYPE program_type ADD VALUE IF NOT EXISTS 'dealer_cash'"))
 
 
+def _ensure_program_type_vin_specific_value() -> None:
+    """
+    Postgres enum migration for the vin_specific program type. Same
+    rationale as the dealer_cash helper — the SQLAlchemy Enum value
+    list is the model declaration, but the live Postgres enum has to
+    be ALTER TYPE'd or program saves with the new type fail with
+    InvalidTextRepresentation.
+    """
+    if not settings.DATABASE_URL.startswith("postgres"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TYPE program_type ADD VALUE IF NOT EXISTS 'vin_specific'"))
+
+
 def _ensure_dealer_cash_stacking_rules() -> None:
     """
     Idempotent backfill for the dealer_cash StackingRule rows. The
@@ -81,6 +95,38 @@ def _ensure_dealer_cash_stacking_rules() -> None:
                 continue
             session.add(StackingRule(
                 deal_type=deal_type, program_type="dealer_cash", allowed=allowed,
+            ))
+        session.commit()
+
+
+def _ensure_vin_specific_stacking_rules() -> None:
+    """
+    Mirrors _ensure_dealer_cash_stacking_rules for the vin_specific
+    program type. Default: stackable with all retail deal types
+    (cash/apr/lease) since per-VIN MSRP rebates are intended as
+    additive unit-level incentives. Excluded from cvp/demo channels.
+    """
+    insp = inspect(engine)
+    if "stacking_rules" not in insp.get_table_names():
+        return
+    from app.models.budget import StackingRule
+    rules = [
+        ("cash", "Y"),
+        ("apr", "Y"),
+        ("lease", "Y"),
+        ("cvp", "N"),
+        ("demo", "N"),
+    ]
+    with SessionLocal() as session:
+        for deal_type, allowed in rules:
+            existing = session.query(StackingRule).filter(
+                StackingRule.deal_type == deal_type,
+                StackingRule.program_type == "vin_specific",
+            ).first()
+            if existing:
+                continue
+            session.add(StackingRule(
+                deal_type=deal_type, program_type="vin_specific", allowed=allowed,
             ))
         session.commit()
 
@@ -214,12 +260,14 @@ async def lifespan(app: FastAPI):
     # Run idempotent migrations that create_all can't do
     _ensure_rule_type_state_value()
     _ensure_program_type_dealer_cash_value()
+    _ensure_program_type_vin_specific_value()
     _ensure_program_published_column()
     _ensure_program_public_facing_column()
     _ensure_program_not_stackable_column()
     _ensure_campaign_code_width()
     _ensure_cvp_stacking_rules()
     _ensure_dealer_cash_stacking_rules()
+    _ensure_vin_specific_stacking_rules()
     # Seed data
     db = SessionLocal()
     try:

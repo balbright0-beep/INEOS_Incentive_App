@@ -238,6 +238,14 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
         matching_layers = []
 
         for prog in active_programs:
+            # vin_specific programs are per-unit (not per-config), so
+            # they NEVER enter the matrix. Their layers are added at
+            # lookup time from ProgramVin rows that match the request's
+            # VIN. Including them here would (a) attach a phantom
+            # 0-dollar layer to every matrix code and (b) double-count
+            # when the lookup path then adds the real VIN amount.
+            if prog.program_type == "vin_specific":
+                continue
             if not is_program_applicable(deal_type, prog.program_type, stacking):
                 continue
             if not program_matches_config(prog, config):

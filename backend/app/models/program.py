@@ -6,6 +6,11 @@ from app.database import Base
 PROGRAM_TYPES = (
     "bonus_cash", "customer_cash", "apr_cash", "lease_cash",
     "dealer_cash",  # Dealer-funded incentive — typically stackable with all retail programs
+    # VIN-specific rebate (e.g. MSRP rebate on aging stock). Eligibility
+    # is gated by VIN being in the program's vin list (ProgramVin); the
+    # amount comes from that row, not Program.per_unit_amount. Excluded
+    # from the campaign-code matrix because it's per-unit, not per-config.
+    "vin_specific",
     "cvp", "demonstrator", "loyalty", "conquest", "tactical", "other"
 )
 PROGRAM_STATUSES = ("draft", "active", "expired", "cancelled")
@@ -82,3 +87,22 @@ class ProgramRule(Base):
     value = Column(JSON, nullable=False)
 
     program = relationship("Program", back_populates="rules")
+
+
+class ProgramVin(Base):
+    """Per-VIN rebate row for vin_specific programs. One row = one VIN
+    eligible for the program, with that VIN's individual rebate amount.
+    The amount lives here (not on Program.per_unit_amount) because the
+    whole point of vin_specific is that each VIN can have its own
+    number — e.g. MSRP rebates on aging stock vary by unit. Excel
+    upload writes these in bulk; the existing rows are wiped and
+    replaced on each upload so re-uploading the spreadsheet is the
+    canonical "update this list" action."""
+
+    __tablename__ = "program_vins"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id = Column(String, ForeignKey("programs.id", ondelete="CASCADE"), nullable=False, index=True)
+    vin = Column(String(17), nullable=False, index=True)
+    amount = Column(Numeric(10, 2), nullable=False)
+    created_at = Column(DateTime, server_default=func.now())

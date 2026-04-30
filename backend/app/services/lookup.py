@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 from app.models.campaign_code import CampaignCode, CampaignCodeLayer
-from app.models.program import Program, ProgramRule
+from app.models.program import Program, ProgramRule, ProgramVin
 from app.schemas.lookup import LookupRequest, LookupResponse, IncentiveLayer, EligibleProgram
 from app.services.stacking import get_stacking_matrix
 from app.services.code_matrix import is_program_applicable, program_matches_config
@@ -102,6 +102,27 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
             amount=float(layer.layer_amount),
         ))
 
+    # VIN-specific overlay on the auto-stacked layer set. These programs
+    # aren't in the matrix (per-unit, not per-config), but when the VIN
+    # is supplied and matches an active vin_specific program the rebate
+    # IS part of the default stack — so it shows up in layers + counts
+    # toward total_support_amount, not just the chooser.
+    for prog, amount in _vin_specific_matches(db, req.vin, deal_type, public_only):
+        if customer_state:
+            allowed_states = _program_has_state_restriction(db, prog.id)
+            if allowed_states is not None and customer_state not in allowed_states:
+                excluded_by_state.append({
+                    "program_type": prog.program_type,
+                    "label": prog.name,
+                    "reason": f"Not available in {customer_state}",
+                })
+                continue
+        layers.append(IncentiveLayer(
+            program_name=prog.name,
+            program_type=prog.program_type,
+            amount=amount,
+        ))
+
     # Recalculate total from eligible layers only
     total_amount = sum(l.amount for l in layers)
 
@@ -164,6 +185,44 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
     )
 
 
+def _vin_specific_matches(db: Session, vin: str | None, deal_type: str,
+                          public_only: bool) -> list[tuple[Program, float]]:
+    """Find every active vin_specific program whose VIN list covers the
+    requested VIN. Returns (program, per_vin_amount) pairs. Empty list
+    when no VIN was supplied or no program covers it.
+
+    vin_specific programs are excluded from the campaign-code matrix
+    because they're per-unit (not per-config), so this is the only
+    place they enter the response. The amount comes from the matching
+    ProgramVin row, NOT from Program.per_unit_amount."""
+    if not vin:
+        return []
+    vin_clean = vin.strip().upper()
+    if not vin_clean:
+        return []
+    rows = (
+        db.query(ProgramVin, Program)
+        .join(Program, ProgramVin.program_id == Program.id)
+        .filter(
+            ProgramVin.vin == vin_clean,
+            Program.status == "active",
+            Program.program_type == "vin_specific",
+        )
+        .all()
+    )
+    if public_only:
+        rows = [(pv, prog) for pv, prog in rows if getattr(prog, "published", False)]
+    # Honor the stacking matrix at the deal-type level — admins can
+    # disable vin_specific for, say, lease deals via the matrix even
+    # though the default is allow-all.
+    stacking = get_stacking_matrix(db)
+    rows = [
+        (pv, prog) for pv, prog in rows
+        if is_program_applicable(deal_type, prog.program_type, stacking)
+    ]
+    return [(prog, float(pv.amount)) for pv, prog in rows]
+
+
 def _build_eligible_programs(db: Session, deal_type: str, req, customer_state, layers_data, public_only: bool) -> list[EligibleProgram]:
     # Reproduce the matching logic from code_matrix.rebuild_matrix so
     # the chooser sees every program that COULD apply, not just the
@@ -188,6 +247,12 @@ def _build_eligible_programs(db: Session, deal_type: str, req, customer_state, l
     auto_ids = {prog.id for _, prog in layers_data}
     eligible: list[EligibleProgram] = []
     for prog in active_programs:
+        # vin_specific programs go through the dedicated VIN matcher
+        # below — never via the per-config rule matcher (they have no
+        # body_style / model_year rules; eligibility is solely the
+        # VIN list).
+        if prog.program_type == "vin_specific":
+            continue
         if not is_program_applicable(deal_type, prog.program_type, stacking):
             continue
         # Loyalty/conquest programs need to appear in the chooser as
@@ -220,6 +285,25 @@ def _build_eligible_programs(db: Session, deal_type: str, req, customer_state, l
             auto_selected=(prog.id in auto_ids),
             conflicts_with=list(getattr(prog, "not_stackable_program_ids", None) or []),
         ))
+
+    # vin_specific overlay — add a row per matching program with the
+    # VIN-specific dollar amount and auto_selected=True (the whole
+    # premise of vin_specific is "this VIN was pre-targeted, surface
+    # the rebate"). The retailer can still untoggle it on the chooser.
+    for prog, amount in _vin_specific_matches(db, req.vin, deal_type, public_only):
+        if customer_state:
+            allowed_states = _program_has_state_restriction(db, prog.id)
+            if allowed_states is not None and customer_state not in allowed_states:
+                continue
+        eligible.append(EligibleProgram(
+            program_id=prog.id,
+            program_name=prog.name,
+            program_type=prog.program_type,
+            amount=amount,
+            auto_selected=True,
+            conflicts_with=list(getattr(prog, "not_stackable_program_ids", None) or []),
+        ))
+
     # Sort: auto-selected first (descending amount), then alternatives
     # (descending amount). Keeps the default stack at the top of the
     # chooser so the retailer's eye lands on what's already applied.
