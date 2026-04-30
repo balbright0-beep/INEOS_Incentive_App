@@ -109,6 +109,19 @@ def _model_code_to_params(model_code: str) -> dict:
     return {"body_style": body, "model_year": my}
 
 
+def _to_date_str(v) -> str | None:
+    """Normalize a Start/End Date cell to YYYY-MM-DD. Inputs come back
+    as datetime.datetime when openpyxl can parse them; some files
+    occasionally store the date as a string."""
+    if v is None:
+        return None
+    try:
+        return v.strftime("%Y-%m-%d")  # datetime.datetime
+    except AttributeError:
+        s = str(v).strip()
+        return s or None
+
+
 def _parse_apr_xlsx(data: bytes) -> list[dict]:
     """Parse APR xlsx bytes into rate records. Pulled out so the same
     parser handles both the National (apr) and State (state_apr) files
@@ -124,6 +137,8 @@ def _parse_apr_xlsx(data: bytes) -> list[dict]:
         term = row[3]
         model_code = str(row[9] or "")
         cpos = str(row[10] or "").upper()
+        start_date = _to_date_str(row[13])  # Start Date
+        end_date = _to_date_str(row[14])    # End Date
         rate = row[15]
 
         if rate is None or str(rate).strip().lower() == "std.":
@@ -145,6 +160,8 @@ def _parse_apr_xlsx(data: bytes) -> list[dict]:
             "model_year": params["model_year"],
             "trim": trim,
             "apr": rate_val,
+            "start_date": start_date,
+            "end_date": end_date,
         })
     wb.close()
     return rates
@@ -165,6 +182,8 @@ def _parse_lease_xlsx(data: bytes) -> list[dict]:
         term = row[3]
         model_code = str(row[8] or "")
         cpos = str(row[9] or "").upper()
+        start_date = _to_date_str(row[12])  # Start Date
+        end_date = _to_date_str(row[13])    # End Date
         mf = row[14]
         acq_fee = row[15]
         residual = row[19]  # Published INEOS Residual
@@ -198,6 +217,8 @@ def _parse_lease_xlsx(data: bytes) -> list[dict]:
             "money_factor_display": str(mf) if mf else "Std.",
             "residual_pct": res_val,
             "acq_fee": float(acq_fee) if acq_fee else 895,
+            "start_date": start_date,
+            "end_date": end_date,
         })
     wb.close()
     return rates

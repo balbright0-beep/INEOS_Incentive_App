@@ -369,6 +369,64 @@ def get_rates(
     }
 
 
+@router.get("/rates/summary")
+def get_rates_summary(
+    model_year: str = "MY26",
+    body_style: str = "station_wagon",
+    tier: int = 1,
+):
+    """Headline Santander offers for the home-page banner. Strips down
+    to per-term best APR + best lease MF/residual for a single
+    "headline" config (default: Tier 1 / MY26 SW / any trim) across
+    the loaded national rate sheet. Used by the public Find Incentive
+    landing card so customers can see what's on this month at a
+    glance, without having to walk the wizard first."""
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    from app.services.santander_rates import (
+        get_apr_for_config, get_lease_for_config,
+    )
+
+    apr = get_apr_for_config(base_dir, model_year, body_style, tier, trim=None, state=None)
+    lease = get_lease_for_config(base_dir, model_year, body_style, tier, trim=None, state=None)
+
+    # Effective period — every row in the file has the same Start/End
+    # Date pair, so first non-null wins. Public banner shows it as
+    # "Effective May 1 – Jun 1, 2026" so customers know the offers
+    # aren't stale.
+    def first_dates(rows):
+        for r in rows:
+            if r.get("start_date") or r.get("end_date"):
+                return r.get("start_date"), r.get("end_date")
+        return None, None
+    start_date, end_date = first_dates(apr) if apr else first_dates(lease)
+
+    return {
+        "model_year": model_year,
+        "body_style": body_style,
+        "tier": tier,
+        "effective_start": start_date,
+        "effective_end": end_date,
+        # Trimmed to fields the banner actually shows — keeps the
+        # response small and the UI mapping obvious.
+        "apr": [
+            {"term": r["term"], "apr": r["apr"], "trim": r.get("trim")}
+            for r in apr
+        ],
+        "lease": [
+            {
+                "term": r["term"],
+                "money_factor": r["money_factor"],
+                "money_factor_display": r.get("money_factor_display"),
+                "residual_pct": r["residual_pct"],
+                "acq_fee": r.get("acq_fee"),
+                "trim": r.get("trim"),
+            }
+            for r in lease
+        ],
+    }
+
+
 @router.get("/states")
 def list_states():
     """Return all US states for dropdown population."""
