@@ -853,8 +853,12 @@
           name: '', program_type: 'customer_cash', effective_date: '2026-04-01', expiration_date: '2026-04-30',
           description: '', budget_amount: '', per_unit_amount: '',
           public_facing: true,
-          // Eligibility selections (converted to rules on save)
-          body_styles: ['station_wagon', 'quartermaster'],
+          // Eligibility selections (converted to rules on save).
+          // Default to all three bodies so a program applies to
+          // Arcane Works by default — admins explicitly uncheck if
+          // they want to exclude it (matches the prior SW+QM
+          // behavior when Arcane Works was a special_edition).
+          body_styles: ['station_wagon', 'quartermaster', 'arcane_works'],
           model_years: ['MY25', 'MY26'],
           trims: [],
           finance_types: [],
@@ -1004,11 +1008,11 @@
       // catalog beyond the seeds (e.g. a typed-in custom trim) appears
       // as an option here too.
       const _activeProducts = (products || []).filter(p => p.active !== false);
-      const _bodyStyleSeeds = ['station_wagon', 'quartermaster'];
+      const _bodyStyleSeeds = ['station_wagon', 'quartermaster', 'arcane_works'];
       const _modelYearSeeds = ['MY25', 'MY26', 'MY27'];
-      const _trimSeeds = ['Base', 'Fieldmaster', 'Belstaff', 'Trialmaster', 'Highlands', 'Arcane Works Detour'];
+      const _trimSeeds = ['Base', 'Fieldmaster', 'Belstaff', 'Trialmaster', 'Highlands'];
 
-      const _formatBody = (b) => (b || '').replace('_', ' ').replace(/\b\w/g, c => c.toUpperCase());
+      const _formatBody = (b) => (b || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
       const _formatMy   = (my) => `${my && my.replace(/^MY/, '20')} (${my})`;
 
       const bodyStyleOptions = Array.from(new Set([
@@ -1795,10 +1799,9 @@
             // regular SW/QM and consults the wrong rate sheet — an
             // Arcane Works VIN ends up showing lease available even
             // though Arcane has no lease rates.
-            special_edition: (
-              (vinActiveRef.current && vinData && vinData.special_edition) ||
-              (vehicle.trim === 'Arcane Works Detour' ? 'arcane_works_detour' : null)
-            ),
+            // Iceland Tactical comes through here. Arcane Works is a
+            // body_style now, not a special edition.
+            special_edition: (vinActiveRef.current && vinData) ? (vinData.special_edition || null) : null,
             zip_code: vehicle.zip_code,
             state: vehicle.state || null,
           };
@@ -1823,10 +1826,9 @@
             model_year: vehicle.model_year,
             body_style: vehicle.body_style,
             trim: vehicle.trim || null,
-            special_edition: (
-              (vinActiveRef.current && vinData && vinData.special_edition) ||
-              (vehicle.trim === 'Arcane Works Detour' ? 'arcane_works_detour' : null)
-            ),
+            // Iceland Tactical comes through here. Arcane Works is a
+            // body_style now, not a special edition.
+            special_edition: (vinActiveRef.current && vinData) ? (vinData.special_edition || null) : null,
             finance_type: dt,
             zip_code: vehicle.zip_code || null,
             state: vehicle.state || null,
@@ -1986,12 +1988,11 @@
                   <Select label="Model Year" value={vehicle.model_year} onChange={e => updateVehicle('model_year', e.target.value)}
                     options={[{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'},{value:'MY27',label:'MY27'}]} />
                   <Select label="Body Style" value={vehicle.body_style} onChange={e => updateVehicle('body_style', e.target.value)}
-                    options={[{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}]} />
+                    options={[{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'},{value:'arcane_works',label:'Arcane Works'}]} />
                 </div>
                 <Select label="Trim" value={vehicle.trim} onChange={e => updateVehicle('trim', e.target.value)} className="mb-4"
                   options={[{value:'',label:'Any'},{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},
-                    {value:'Belstaff',label:'Belstaff'},{value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'},
-                    {value:'Arcane Works Detour',label:'Arcane Works Detour'}]} />
+                    {value:'Belstaff',label:'Belstaff'},{value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'}]} />
 
                 <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Location</h3>
                 <Input label="ZIP Code" value={vehicle.zip_code} onChange={e => {

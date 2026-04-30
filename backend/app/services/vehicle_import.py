@@ -38,13 +38,24 @@ COL = {
 
 
 def _parse_material(material_desc: str) -> tuple[str, str, str | None]:
-    """Parse 'Station Wagon 5-Seat MY25' into (body_style, model_year, special_edition)."""
+    """Parse 'Station Wagon 5-Seat MY25' into (body_style, model_year, special_edition).
+
+    Arcane Works is its own body code (G13C), not a special edition,
+    so 'arcane' in the material description maps to body_style=
+    'arcane_works' with special_edition=None. Iceland Tactical
+    remains a special edition because it's still a SW/QM trim
+    package, not a separate model code.
+    """
     if not material_desc:
         return ("station_wagon", "MY25", None)
 
-    body_style = "station_wagon"
-    if "quartermaster" in material_desc.lower():
+    desc_lower = material_desc.lower()
+    if "arcane" in desc_lower:
+        body_style = "arcane_works"
+    elif "quartermaster" in desc_lower:
         body_style = "quartermaster"
+    else:
+        body_style = "station_wagon"
 
     model_year = "MY25"
     my_match = re.search(r'MY(\d{2})', material_desc)
@@ -52,9 +63,7 @@ def _parse_material(material_desc: str) -> tuple[str, str, str | None]:
         model_year = f"MY{my_match.group(1)}"
 
     special = None
-    if "arcane" in material_desc.lower():
-        special = "arcane_works_detour"
-    elif "iceland" in material_desc.lower():
+    if "iceland" in desc_lower:
         special = "iceland_tactical"
 
     return (body_style, model_year, special)

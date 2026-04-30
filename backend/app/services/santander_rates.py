@@ -113,14 +113,17 @@ def _model_code_to_params(model_code: str) -> dict:
     Prefix mapping (observed in the Santander input files):
       G01* -> Station Wagon (Base / Fieldmaster / Belstaff / Trialmaster / Highlands)
       G09* -> Quartermaster
-      G13* -> Station Wagon, Arcane Works Detour special edition (CPOS=SVO)
+      G13* -> Arcane Works (its OWN body style — was previously a SW
+              + special_edition='arcane_works_detour' pairing, but
+              that collapsed Arcane into the SW rate sheet and broke
+              filter/matrix flows)
 
     Suffix encodes model year (last char): C = MY25, D = MY26.
     """
     if model_code.startswith("G01"):
         body, special = "station_wagon", None
     elif model_code.startswith("G13"):
-        body, special = "station_wagon", "arcane_works_detour"
+        body, special = "arcane_works", None
     else:
         body, special = "quartermaster", None  # G09 + anything else
     suffix = model_code[-1] if model_code else "C"

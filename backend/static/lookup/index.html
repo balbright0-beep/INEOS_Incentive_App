@@ -509,6 +509,7 @@
               <select id="body_style" class="field-select">
                 <option value="station_wagon" selected>Station Wagon</option>
                 <option value="quartermaster">Quartermaster</option>
+                <option value="arcane_works">Arcane Works</option>
               </select>
             </div>
           </div>
@@ -521,7 +522,6 @@
               <option value="Belstaff">Belstaff</option>
               <option value="Trialmaster">Trialmaster</option>
               <option value="Highlands">Highlands</option>
-              <option value="Arcane Works Detour">Arcane Works Detour</option>
             </select>
           </div>
 
@@ -863,16 +863,10 @@
         model_year: $('model_year').value,
         body_style: $('body_style').value,
         trim: $('trim').value || null,
-        // Special edition (Arcane Works Detour, Iceland Tactical) is
-        // sourced from the VIN-decode response or inferred from a
-        // manually-selected Arcane trim. Without forwarding it the
-        // backend evaluates the vehicle as a regular SW/QM, which
-        // would pull the wrong rate sheet and (e.g.) show lease
-        // available for an Arcane VIN that has no lease rates.
-        special_edition: (
-          (vinActive && _vinData && _vinData.special_edition) ||
-          (($('trim').value || '').toLowerCase() === 'arcane works detour' ? 'arcane_works_detour' : null)
-        ),
+        // Special edition (Iceland Tactical) — Arcane Works is now a
+        // first-class body_style ("arcane_works") rather than a
+        // special edition, so it doesn't need to be inferred here.
+        special_edition: (vinActive && _vinData) ? (_vinData.special_edition || null) : null,
         zip_code: zip,
         state: $('state').value || null,
       };
@@ -1638,7 +1632,8 @@
       { label: 'MY26 Station Wagon',         model_year: 'MY26', body_style: 'station_wagon' },
       { label: 'MY25 Quartermaster',         model_year: 'MY25', body_style: 'quartermaster' },
       { label: 'MY26 Quartermaster',         model_year: 'MY26', body_style: 'quartermaster' },
-      { label: 'MY25 Arcane Works Detour',   model_year: 'MY25', body_style: 'station_wagon', special_edition: 'arcane_works_detour' },
+      // Arcane Works is its own body code (G13C) now, not a SW + special_edition pair.
+      { label: 'MY25 Arcane Works',          model_year: 'MY25', body_style: 'arcane_works' },
     ];
 
     function activateTab(name) {

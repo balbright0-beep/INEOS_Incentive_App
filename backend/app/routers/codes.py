@@ -198,8 +198,14 @@ def _campaign_label(code, layers_data):
 
 
 def _model_code(body_style, model_year):
-    """Generate model code like G01C (SW MY25), G09C (QM MY25), G01D (SW MY26)."""
-    body = "G01" if body_style == "station_wagon" else "G09"
+    """Generate the SAP model code. G01 = SW, G09 = QM, G13 = Arcane
+    Works (G13C is its own production model code, distinct from SW)."""
+    if body_style == "quartermaster":
+        body = "G09"
+    elif body_style == "arcane_works":
+        body = "G13"
+    else:
+        body = "G01"
     suffix = "D" if model_year and model_year >= "MY26" else "C"
     return f"{body}{suffix}"
 
@@ -219,7 +225,9 @@ def _customer_group(deal_type):
 def _vehicle_label(code):
     """Build the vehicle description like '2025 Station Wagon' or 'APR Program (2026 Station Wagon)'."""
     my = (code.model_year or "MY25").replace("MY", "20")
-    body = (code.body_style or "station_wagon").replace("_", " ").title()
+    body_raw = code.body_style or "station_wagon"
+    # "Arcane Works" reads better than the snake-case-titled "Arcane Works".
+    body = "Arcane Works" if body_raw == "arcane_works" else body_raw.replace("_", " ").title()
     dt = (code.deal_type or "cash").lower()
     special = code.special_flag
 

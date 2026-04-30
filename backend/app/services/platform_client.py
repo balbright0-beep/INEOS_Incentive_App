@@ -58,13 +58,24 @@ def fetch_vehicle_by_vin(vin: str, timeout: float = 5.0) -> dict | None:
 # normalizer keeps the hub call transparent to callers — they get back
 # the same shape that the local Vehicle table query returns.
 
-def _normalize_body(body: str | None) -> str:
+def _normalize_body(body: str | None, trim: str | None = None) -> str:
+    """Map the Platform body code to the Incentive App's body_style enum.
+    Arcane Works (G13C / SVO) is now its OWN body code rather than
+    riding on station_wagon — that change is what lets Arcane have
+    distinct rate sheets, campaign codes, and program targeting.
+    Detection: the Platform body field comes back as SVO for Arcane,
+    or the trim string contains 'ARCANE' as a fallback."""
     if not body:
+        # No body code? Last-resort check on the trim string.
+        if trim and "ARCANE" in trim.upper():
+            return "arcane_works"
         return "station_wagon"
     b = body.upper().strip()
     if b == "QM":
         return "quartermaster"
-    return "station_wagon"  # SW, SVO, anything else — both ride on SW chassis
+    if b == "SVO" or (trim and "ARCANE" in trim.upper()):
+        return "arcane_works"
+    return "station_wagon"
 
 
 def _normalize_model_year(my: str | None) -> str | None:
@@ -85,14 +96,13 @@ def _normalize_model_year(my: str | None) -> str | None:
 
 def _detect_special_edition(trim: str | None) -> str | None:
     """The Platform doesn't store a separate special_edition field —
-    it's encoded in the trim or material desc. Mirror the import-side
-    detection so downstream campaign-code matching works the same way
-    whether the data came from the hub or a local Master File upload."""
+    it's encoded in the trim or material desc. Iceland Tactical stays
+    a special edition because it's still a SW/QM trim package.
+    Arcane Works is no longer reported here because it's now a
+    first-class body_style instead of a trim/special edition."""
     if not trim:
         return None
     t = trim.upper()
-    if "ARCANE" in t:
-        return "arcane_works_detour"
     if "ICELAND" in t:
         return "iceland_tactical"
     return None
@@ -127,7 +137,7 @@ def map_platform_to_incentive_shape(p: dict) -> dict:
     return {
         "vin": p.get("vin"),
         "model_year": _normalize_model_year(p.get("model_year")),
-        "body_style": _normalize_body(p.get("body")),
+        "body_style": _normalize_body(p.get("body"), p.get("trim")),
         "trim": _normalize_trim(p.get("trim")),
         "special_edition": _detect_special_edition(p.get("trim")),
         "msrp": float(p["msrp"]) if p.get("msrp") is not None else None,

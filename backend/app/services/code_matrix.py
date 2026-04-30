@@ -67,8 +67,14 @@ def generate_code_string(body_style: str, model_year: str, deal_type: str,
     Format: <prefix><body><my_letter>[<flags>].
     """
 
-    is_qm = body_style == "quartermaster"
-    body_short = "QM" if is_qm else "SW"
+    # Body short codes used inside the campaign code string. AW = the
+    # Arcane Works G13C body (its own model code, not a SW variant).
+    if body_style == "quartermaster":
+        body_short = "QM"
+    elif body_style == "arcane_works":
+        body_short = "AW"
+    else:
+        body_short = "SW"
 
     # MY letter (S / T / V / ...) — required so different model years
     # never collide on the same code string. Falls back to "" when MY
@@ -203,7 +209,12 @@ def build_configuration_space(db: Session) -> list[dict]:
             specials.add(p.special_edition)
 
     if not body_styles:
-        body_styles = {"station_wagon", "quartermaster"}
+        body_styles = {"station_wagon", "quartermaster", "arcane_works"}
+    else:
+        # Always cover the three known body codes so the matrix can
+        # emit codes for them even when the product catalog is sparse
+        # (e.g. before someone seeds an Arcane Works product row).
+        body_styles |= {"station_wagon", "quartermaster", "arcane_works"}
     if not model_years:
         model_years = {"MY25", "MY26"}
 

@@ -3,7 +3,12 @@ from sqlalchemy import Column, String, Enum, Boolean, Date, Numeric, DateTime, f
 from sqlalchemy.orm import relationship
 from app.database import Base
 
-BODY_STYLES = ("station_wagon", "quartermaster")
+# Arcane Works (G13C SVO/Detour) gets its own body code rather than
+# riding on station_wagon + special_edition='arcane_works_detour'.
+# That older modeling collapsed Arcane into the SW rate sheet and
+# campaign-code matrix, which broke once Arcane started having
+# distinct rate rows + a need for cleanly separable campaign codes.
+BODY_STYLES = ("station_wagon", "quartermaster", "arcane_works")
 DEAL_TYPES = ("cash", "apr", "lease", "cvp", "demo")
 
 

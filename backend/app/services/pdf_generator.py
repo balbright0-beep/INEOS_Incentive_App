@@ -820,7 +820,7 @@ def _amount_by_model_rows(program):
     first body_style rule, dropping data on multi-body programs."""
     amount = float(program.per_unit_amount or 0)
     amount_str = f"${amount:,.0f}"
-    body_styles = _rule_values(program, "body_style") or ["station_wagon", "quartermaster"]
+    body_styles = _rule_values(program, "body_style") or ["station_wagon", "quartermaster", "arcane_works"]
     model_years = _rule_values(program, "model_year") or ["MY25", "MY26"]
     trims = _rule_values(program, "trim")
     rows = []
@@ -1264,7 +1264,7 @@ def generate_program_bulletin(db: Session, program_id: str) -> str:
             # MY x body combination at the top, then the boilerplate once. Was
             # previously N near-identical paragraphs (one per combo) which
             # bloated the bulletin to 3 pages of mostly-duplicate text.
-            body_labels = [b.replace("_", " ").title() for b in (_rule_values(program, "body_style") or ["station_wagon", "quartermaster"])]
+            body_labels = [b.replace("_", " ").title() for b in (_rule_values(program, "body_style") or ["station_wagon", "quartermaster", "arcane_works"])]
             my_labels = [m.replace("MY", "20") for m in (_rule_values(program, "model_year") or ["MY25", "MY26"])]
             combos = ", ".join(f"{my} INEOS Grenadier {bs}" for my in my_labels for bs in body_labels)
             not_apr_clause = " Not available with special APR or Retail Finance offers." if program.program_type == "customer_cash" else ""

@@ -62,6 +62,20 @@ def _ensure_program_type_vin_specific_value() -> None:
         conn.execute(text("ALTER TYPE program_type ADD VALUE IF NOT EXISTS 'vin_specific'"))
 
 
+def _ensure_body_style_arcane_works_value() -> None:
+    """
+    Postgres enum migration for the arcane_works body style. Same
+    pattern as the program_type migrations — Arcane Works is now its
+    own body code (not station_wagon + special_edition), so the
+    body_style_enum needs the new value or any matrix rebuild that
+    inserts an arcane_works row blows up with InvalidTextRepresentation.
+    """
+    if not settings.DATABASE_URL.startswith("postgres"):
+        return
+    with engine.begin() as conn:
+        conn.execute(text("ALTER TYPE body_style_enum ADD VALUE IF NOT EXISTS 'arcane_works'"))
+
+
 def _ensure_dealer_cash_stacking_rules() -> None:
     """
     Idempotent backfill for the dealer_cash StackingRule rows. The
@@ -261,6 +275,7 @@ async def lifespan(app: FastAPI):
     _ensure_rule_type_state_value()
     _ensure_program_type_dealer_cash_value()
     _ensure_program_type_vin_specific_value()
+    _ensure_body_style_arcane_works_value()
     _ensure_program_published_column()
     _ensure_program_public_facing_column()
     _ensure_program_not_stackable_column()
