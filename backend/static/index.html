@@ -1229,8 +1229,8 @@
       // ZIP-driven initTaxRate effect doesn't clobber their override.
       const taxRateTouchedRef = React.useRef(false);
       const [pf, setPf] = React.useState({
-        msrp: initMsrp || '75000', down: '0', trade: '0',
-        discount: '0', dealer_fee: '0',
+        msrp: initMsrp || '75000', down: '5000', trade: '0',
+        discount: '2000', dealer_fee: '0',
         apr: '5.99', term_finance: '60',
         money_factor: '0.00250', residual_pct: '55', term_lease: '36', acq_fee: '895',
         tax_rate: initTaxRate != null ? String(initTaxRate) : '0',
