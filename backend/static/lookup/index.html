@@ -1459,8 +1459,18 @@
     function _calculatorCard(dealType, calc, incentive) {
       const c = _calc;
       const dealLabel = dealType === 'apr' ? 'Finance (APR)' : dealType === 'lease' ? 'Lease' : 'Cash';
+      // Standard rate rows (is_standard=true, apr=null) come from a
+      // rate sheet where Santander didn't publish a subvented APR for
+      // this term — the dealer enters the actual Tier 1 APR at deal
+      // time. Label them "Std." in the dropdown so the user knows the
+      // displayed APR field is theirs to fill in.
       const aprTermOpts = c.rates.apr?.length
-        ? c.rates.apr.map(r => ({ value: String(r.term), label: `${r.term}mo @ ${r.apr}%` }))
+        ? c.rates.apr.map(r => ({
+            value: String(r.term),
+            label: r.is_standard
+              ? `${r.term}mo · Std. APR (Tier 1)`
+              : `${r.term}mo @ ${r.apr}%`,
+          }))
         : [60, 72, 84].map(t => ({ value: String(t), label: `${t}mo` }));
       const leaseTermOpts = c.rates.lease?.length
         ? c.rates.lease.filter(r => r.residual_pct != null).map(r => {

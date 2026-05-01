@@ -163,12 +163,24 @@ def _parse_apr_xlsx(data: bytes) -> list[dict]:
         end_date = _to_date_str(row[14])    # End Date
         rate = row[15]
 
-        if rate is None or str(rate).strip().lower() == "std.":
-            continue
-        try:
-            rate_val = float(rate)
-        except (ValueError, TypeError):
-            continue
+        # "Std." in the rate cell means Santander's standard
+        # (non-subvented) buy rate — Santander quotes per credit tier
+        # at the time of approval, so there's no fixed published
+        # number. Keep these rows so the lookup knows the deal type
+        # IS available; downstream UI labels them as "Standard rate"
+        # and leaves the dealer to enter the actual quoted APR.
+        is_standard = False
+        rate_val: float | None = None
+        if rate is None:
+            continue  # truly missing — skip
+        rate_str = str(rate).strip()
+        if rate_str.lower() == "std.":
+            is_standard = True
+        else:
+            try:
+                rate_val = float(rate)
+            except (ValueError, TypeError):
+                continue
 
         params = _model_code_to_params(model_code)
         trim = CPOS_TO_TRIM.get(cpos, cpos.title() if cpos else "Base")
@@ -182,7 +194,8 @@ def _parse_apr_xlsx(data: bytes) -> list[dict]:
             "model_year": params["model_year"],
             "special_edition": params["special_edition"],
             "trim": trim,
-            "apr": rate_val,
+            "apr": rate_val,                # None when standard
+            "is_standard": is_standard,
             "start_date": start_date,
             "end_date": end_date,
         })
@@ -212,7 +225,13 @@ def _parse_lease_xlsx(data: bytes) -> list[dict]:
         residual = row[19]  # Published INEOS Residual
 
         mf_val = None
-        if mf is not None and str(mf).strip().lower() != "std.":
+        # "Std." in the MF cell means Santander's standard MF — the
+        # row is still loaded so the lease deal type counts as
+        # available; mf_val stays None so the calculator's UI can
+        # label it "Standard MF" and let the dealer enter the
+        # actual quoted number at deal time.
+        is_standard = (mf is None) or (str(mf).strip().lower() == "std.")
+        if not is_standard:
             try:
                 mf_val = float(mf)
             except (ValueError, TypeError):
@@ -238,7 +257,8 @@ def _parse_lease_xlsx(data: bytes) -> list[dict]:
             "special_edition": params["special_edition"],
             "trim": trim,
             "money_factor": mf_val,
-            "money_factor_display": str(mf) if mf else "Std.",
+            "money_factor_display": "Std." if is_standard else str(mf),
+            "is_standard": is_standard,
             "residual_pct": res_val,
             "acq_fee": float(acq_fee) if acq_fee else 895,
             "start_date": start_date,
@@ -298,8 +318,17 @@ def _is_state_row(r: dict, state: str | None) -> bool:
 
 def _pick_per_term_apr(matching: list[dict], state: str | None) -> dict[int, dict]:
     """For each term, pick a state row over a national row. Among rows
-    with the same region, prefer the lowest APR — same tiebreak as
-    before, just within-region instead of across all regions."""
+    with the same region, prefer the lowest published APR — Standard
+    rows have apr=None and lose the tiebreak to subvented rows so a
+    subvented number is shown when one exists; otherwise the standard
+    row carries through and the calculator UI labels it accordingly."""
+    def apr_better(new: dict, cur: dict) -> bool:
+        if new.get("apr") is None:
+            return False
+        if cur.get("apr") is None:
+            return True
+        return new["apr"] < cur["apr"]
+
     by_term: dict[int, dict] = {}
     for r in matching:
         t = r["term"]
@@ -311,7 +340,7 @@ def _pick_per_term_apr(matching: list[dict], state: str | None) -> dict[int, dic
         cur_is_state = _is_state_row(cur, state)
         if new_is_state and not cur_is_state:
             by_term[t] = r
-        elif new_is_state == cur_is_state and r["apr"] < cur["apr"]:
+        elif new_is_state == cur_is_state and apr_better(r, cur):
             by_term[t] = r
     return by_term
 

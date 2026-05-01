@@ -465,9 +465,12 @@ def get_rates_summary(
         "effective_start": start_date,
         "effective_end": end_date,
         # Trimmed to fields the banner actually shows — keeps the
-        # response small and the UI mapping obvious.
+        # response small and the UI mapping obvious. is_standard
+        # surfaces "no published rate, dealer enters Tier 1 std at
+        # delivery" rows so the calculator can label them clearly.
         "apr": [
-            {"term": r["term"], "apr": r["apr"], "trim": r.get("trim")}
+            {"term": r["term"], "apr": r["apr"], "trim": r.get("trim"),
+             "is_standard": r.get("is_standard", False)}
             for r in apr
         ],
         "lease": [
@@ -475,6 +478,7 @@ def get_rates_summary(
                 "term": r["term"],
                 "money_factor": r["money_factor"],
                 "money_factor_display": r.get("money_factor_display"),
+                "is_standard": r.get("is_standard", False),
                 "residual_pct": r["residual_pct"],
                 "acq_fee": r.get("acq_fee"),
                 "trim": r.get("trim"),
