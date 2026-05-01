@@ -184,16 +184,33 @@ def update_mileage_degradation(
 
 
 # --- Document Generation ---
+def _inline_pdf_response(filepath: str) -> FileResponse:
+    """FileResponse for a PDF served inline so browsers render it inside
+    iframes / new tabs instead of forcing a download. Passing filename=
+    to FileResponse implicitly sets Content-Disposition: attachment,
+    which broke the in-page Preview overlay (the iframe came up gray
+    because the browser tried to download instead of render). Setting
+    the header explicitly to inline + filename keeps the suggested
+    name when a user does click Download or Save As from the viewer."""
+    name = os.path.basename(filepath)
+    safe = name.replace('"', '')
+    return FileResponse(
+        filepath,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{safe}"'},
+    )
+
+
 @router.get("/bulletin/{program_id}")
 def get_bulletin(program_id: str, db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     filepath = generate_program_bulletin(db, program_id)
-    return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+    return _inline_pdf_response(filepath)
 
 
 @router.get("/quick-reference")
 def get_quick_reference(db: Session = Depends(get_db), user: User = Depends(get_current_user)):
     filepath = generate_quick_reference_card(db)
-    return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+    return _inline_pdf_response(filepath)
 
 
 @router.get("/public/bulletin/{program_id}")
@@ -209,7 +226,7 @@ def get_public_bulletin(program_id: str, db: Session = Depends(get_db)):
     if not prog or prog.status != "active" or not getattr(prog, "published", False):
         raise HTTPException(status_code=404, detail="Program not found or not yet live")
     filepath = generate_program_bulletin(db, program_id)
-    return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+    return _inline_pdf_response(filepath)
 
 
 @router.get("/public/quick-reference")
@@ -220,7 +237,7 @@ def get_public_quick_reference(db: Session = Depends(get_db)):
     which programs to publish.
     """
     filepath = generate_quick_reference_card(db)
-    return FileResponse(filepath, media_type="application/pdf", filename=os.path.basename(filepath))
+    return _inline_pdf_response(filepath)
 
 
 # --- Vehicle Inventory (Master File) ---
