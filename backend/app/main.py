@@ -317,6 +317,24 @@ def health():
     return {"status": "ok", "app": settings.APP_NAME}
 
 
+# Defeat HTML caching so feature deploys land in users' browsers on
+# the next request without requiring a hard-refresh. Without this
+# Render's default headers (Last-Modified + ETag) let browsers
+# 304-revalidate against an old cached HTML — multiple users have
+# reported "I don't see the new tab" until they nuke their cache.
+# Targeted at HTML responses only; opaque assets (PNG, fonts, etc.)
+# can stay normally cacheable.
+@app.middleware("http")
+async def _no_cache_html(request, call_next):
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if "text/html" in ctype:
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+    return response
+
+
 # Serve static frontend (Next.js export) if the directory exists
 static_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "static")
 if os.path.isdir(static_dir):
