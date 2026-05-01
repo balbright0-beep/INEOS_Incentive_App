@@ -1252,8 +1252,14 @@
       let loyalty = false, conquest = false;
       for (const p of (r.eligible_programs || [])) {
         if (!_selectedProgramIds.has(p.program_id)) continue;
-        if (p.program_type === 'loyalty') loyalty = true;
-        else if (p.program_type === 'conquest') conquest = true;
+        // Match on type first, but also fall back to the program name
+        // — admins sometimes type a Loyalty/Conquest program as
+        // bonus_cash because the rebate funding is the same. The
+        // semantic is still loyalty/conquest, so the campaign code
+        // should pick up the L/C/B flag accordingly.
+        const name = (p.program_name || '').toLowerCase();
+        if (p.program_type === 'loyalty' || name.includes('loyalty')) loyalty = true;
+        else if (p.program_type === 'conquest' || name.includes('conquest')) conquest = true;
       }
       return { loyalty, conquest };
     }

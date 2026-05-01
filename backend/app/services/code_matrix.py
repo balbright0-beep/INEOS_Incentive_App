@@ -277,10 +277,18 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
                 continue
             if not program_matches_config(prog, config):
                 continue
-            # Loyalty/conquest program types only apply if the flag is set
-            if prog.program_type == "loyalty" and not config["loyalty"]:
+            # Loyalty/conquest gate. Match on type primarily, but also
+            # fall back to the program name — admins sometimes type a
+            # Loyalty/Conquest program as bonus_cash because the
+            # rebate funding is the same. The campaign-code variant
+            # (USCSWSL / USCSWSC / USCSWSB) needs the L/C bit either
+            # way, so the gate has to recognize both signals.
+            name_lc = (prog.name or "").lower()
+            is_loyalty = prog.program_type == "loyalty" or "loyalty" in name_lc
+            is_conquest = prog.program_type == "conquest" or "conquest" in name_lc
+            if is_loyalty and not config["loyalty"]:
                 continue
-            if prog.program_type == "conquest" and not config["conquest"]:
+            if is_conquest and not config["conquest"]:
                 continue
             matching_layers.append({
                 "program_id": prog.id,
@@ -346,9 +354,20 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
         # applies while paying the exact same amount as the non-
         # loyalty / non-conquest version. Skip those — they'd just be
         # noise in the matrix and the public lookup.
-        if config["loyalty"] and not any(l["program_type"] == "loyalty" for l in matching_layers):
+        # Match on type primarily, but also fall back to the program
+        # name (case-insensitive) — a "Loyalty" program typed as
+        # bonus_cash should still satisfy this gate so the L variant
+        # gets emitted.
+        def _has_layer(kind: str) -> bool:
+            for l in matching_layers:
+                if l["program_type"] == kind:
+                    return True
+                if kind in (l.get("program_name") or "").lower():
+                    return True
+            return False
+        if config["loyalty"] and not _has_layer("loyalty"):
             continue
-        if config["conquest"] and not any(l["program_type"] == "conquest" for l in matching_layers):
+        if config["conquest"] and not _has_layer("conquest"):
             continue
 
         code_str = generate_code_string(

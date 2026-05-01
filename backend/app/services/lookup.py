@@ -288,10 +288,19 @@ def _build_eligible_programs(db: Session, deal_type: str, req, customer_state, l
         # called with comes back to false in the response, and the
         # frontend re-issues the lookup with the right flag when the
         # user opts the program in.
-        is_loyalty_or_conquest = prog.program_type in ("loyalty", "conquest")
+        # Match on type primarily, but also fall back to the program
+        # name — admins sometimes type a Loyalty/Conquest program as
+        # bonus_cash because the rebate funding is the same. The
+        # campaign-code variant still needs the L/C flag either way.
+        name_lc = (prog.name or "").lower()
+        effective_type = None
+        if prog.program_type == "loyalty" or "loyalty" in name_lc:
+            effective_type = "loyalty"
+        elif prog.program_type == "conquest" or "conquest" in name_lc:
+            effective_type = "conquest"
         eval_config = dict(config)
-        if is_loyalty_or_conquest:
-            eval_config[prog.program_type] = True
+        if effective_type:
+            eval_config[effective_type] = True
         if not program_matches_config(prog, eval_config):
             continue
         # State-restriction filter — the program is removed entirely
