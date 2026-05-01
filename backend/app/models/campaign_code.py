@@ -16,13 +16,14 @@ class CampaignCode(Base):
     __tablename__ = "campaign_codes"
 
     id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    # Bumped 6 → 10 → 12. The 10-bump lets APR/Lease codes carry a
-    # model-year digit (USASWS vs USASWT). The 12-bump makes room
-    # for special-edition codes that need US + sp[3] + body[2] +
-    # my[1] + dt[1] + flags[2] = 12 chars (e.g. USARDSWTCLC for an
-    # MY26 SW Arcane Cash + Loyalty + Conquest combo). Existing
-    # shorter codes stay valid.
-    code = Column(String(12), unique=True, nullable=False, index=True)
+    # Hard 6-char SAP cap. We briefly experimented with String(10)
+    # and String(12) to fit longer composite codes (model-year +
+    # body + flag combos) but SAP rejects anything > 6, so the code
+    # generator was rewritten to use single-letter body / deal-type
+    # / flag codes that always fit. Existing wider columns in
+    # production are left as-is — only the constraint and the values
+    # going IN are 6-char-bound.
+    code = Column(String(6), unique=True, nullable=False, index=True)
     label = Column(String(300), nullable=True)
     support_amount = Column(Numeric(10, 2), nullable=False, default=0)
     model_year = Column(String(10), nullable=True)

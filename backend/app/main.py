@@ -166,31 +166,21 @@ def _ensure_cvp_stacking_rules() -> None:
 
 def _ensure_campaign_code_width() -> None:
     """
-    Idempotent ALTER for the campaign_codes.code column width.
-    Bumped 6 → 10 (APR/Lease MY suffix) → 12 (special-edition
-    codes that need body+deal+flags suffixes). Postgres-only —
-    SQLite doesn't enforce VARCHAR length so its CHECK constraint
-    already accepts any length.
+    Wipe any campaign_code rows whose code exceeds the 6-char SAP
+    cap. Earlier iterations of the code generator emitted longer
+    strings (8-12 chars) when we briefly tried to fit body + deal
+    type + flags + MY into one code; SAP rejected those. The column
+    itself isn't shrunk (a Postgres ALTER would fail if any rows
+    are > 6) — instead we delete the offenders + their layers and
+    let the next matrix rebuild emit clean 6-char codes.
     """
-    if not settings.DATABASE_URL.startswith("postgres"):
-        return
     insp = inspect(engine)
     if "campaign_codes" not in insp.get_table_names():
         return
-    cols = {c["name"]: c for c in insp.get_columns("campaign_codes")}
-    code_col = cols.get("code")
-    if not code_col:
-        return
-    # SQLAlchemy reports type as e.g. VARCHAR(10); read .length when
-    # available. Skip if already >= 12.
-    existing_len = getattr(getattr(code_col.get("type"), "length", None), "real", None) or getattr(code_col.get("type"), "length", None)
-    try:
-        if existing_len and int(existing_len) >= 12:
-            return
-    except (TypeError, ValueError):
-        pass
     with engine.begin() as conn:
-        conn.execute(text("ALTER TABLE campaign_codes ALTER COLUMN code TYPE VARCHAR(12)"))
+        # CampaignCodeLayer cascades on ON DELETE CASCADE so the
+        # delete on campaign_codes is enough.
+        conn.execute(text("DELETE FROM campaign_codes WHERE LENGTH(code) > 6"))
 
 
 def _ensure_program_not_stackable_column() -> None:

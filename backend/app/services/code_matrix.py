@@ -17,34 +17,43 @@ from app.models.dealer import Product
 from app.services.stacking import get_stacking_matrix, is_program_applicable
 
 
-# --- Code naming convention (6-character max, matching production) ---
+# --- Code naming convention (HARD 6-character SAP cap) ---
 #
-# ONE code per deal at SAP handover. Max 6 characters.
-# The code encodes: country + body/deal + MY variant + loyalty/conquest overlays
+# SAP refuses anything longer than 6 characters, so every variant has
+# to fit. Letters only (no digits). Layout:
 #
-# Production examples:
-#   CASH:  USSW, USSWL, USFNF, USFNFL, USQM, USQML, USFNQM, USFNQL
-#   MY26:  USSWD, USSWLD, USFND, USFNFD, USQMD, USQMLD, USFNQD, USFDQL
-#   APR:   USAPSW, USAPSL, USASFN, USALNS, USAPQM, USAPQL, USAQFN, USALNQ
-#   LEASE: USLESW, USLESL, USLFNS, USLLNS, USLEEL, USLLEL
-#   OTHER: USARDC, USARDL, USCVP, USDEMO
+#   US + dt(1) + body(1) + my(1) + flag(0-1) = 5 or 6 chars
+#
+#   dt    : C(ash) / A(pr) / L(ease) / V(=cVp) / D(emo)
+#   body  : S(W) / Q(M) / A(rcane works G13C body)
+#   my    : R=24 / S=25 / T=26 / V=27 (matches the VIN's 10th char)
+#   flag  : L=loyalty only, C=conquest only, B=both. Empty otherwise.
+#
+# Examples:
+#   USCSS   = Cash, SW, MY25, base
+#   USCSSL  = Cash, SW, MY25, +Loyalty
+#   USCSSC  = Cash, SW, MY25, +Conquest
+#   USCSSB  = Cash, SW, MY25, +Loyalty +Conquest
+#   USCST   = Cash, SW, MY26, base
+#   USCQS   = Cash, QM, MY25, base
+#   USCAS   = Cash, Arcane Works (G13C body), MY25
+#   USAAS   = APR  Arcane MY25
+#   USVSS   = CVP  SW MY25  (CVP/Demo never carry loyalty/conquest)
+#   USDQT   = Demo QM MY26
+#
+# A previous iteration of this file used 2-char body abbreviations
+# (SW/QM/AW) which forced MAX_CODE_LEN to 12 to fit loyalty+conquest
+# combos. SAP rejected those longer codes, so we collapsed body to a
+# single letter and traded the LC suffix for a single B (both)
+# letter. The compact scheme is what production has always used in
+# spirit (USSW / USSWL / USSWD / USSWLD); this just extends it
+# uniformly to all body/deal-type/MY combinations.
+MAX_CODE_LEN = 6
 
-# Bumped from 6 → 10 so APR/Lease/etc codes can carry a model-year
-# suffix without colliding. Codes were previously truncated to 6,
-# which meant USAPSW (APR Station Wagon) was the same string for
-# MY25 and MY26 — the matrix builder's dedup kept whichever ran
-# first and silently dropped the other, so the retailer lookup for
-# MY26 SW returned 404. Then bumped 10 → 12 so special-edition
-# codes (US + sp[3] + body[2] + my[1] + dt[1] + flags[2]) fit
-# without truncating loyalty+conquest combos like USARDSWTCLC.
-# Existing 6/10-char codes still valid.
-MAX_CODE_LEN = 12
 
-
-# Model year → VIN-standard 10th-character letter. Lines up with the
-# decoding table in lookup.vin_lookup so a code's MY suffix matches
-# the letter a retailer would see in the VIN itself. Letters only
-# (no digits anywhere in campaign codes — SAP requirement).
+# Model year → VIN-standard 10th-character letter. Matches the VIN
+# decoding table in routers/lookup.vin_lookup so the MY letter in a
+# campaign code is the same letter a retailer would read off the VIN.
 MY_TO_LETTER = {
     "MY24": "R",
     "MY25": "S",
@@ -56,89 +65,66 @@ MY_TO_LETTER = {
 }
 
 
+# Single-letter body codes used inside the campaign-code string.
+# A = Arcane Works (G13C body — distinct from SW because it has its
+# own SAP material code and rate sheet).
+_BODY_LETTER = {
+    "station_wagon": "S",
+    "quartermaster": "Q",
+    "arcane_works":  "A",
+}
+
+# Single-letter deal-type prefix.
+_DT_LETTER = {
+    "cash":  "C",
+    "apr":   "A",
+    "lease": "L",
+    "cvp":   "V",
+    "demo":  "D",
+}
+
+
+def _flag_letter(loyalty: bool, conquest: bool) -> str:
+    """L (loyalty only), C (conquest only), B (both), or empty.
+    'B' (both) is used because LC would push the code to 7 characters,
+    which SAP rejects. The flag letter is parsed by position (last
+    char) so 'C' there is unambiguous despite 'C' also being the
+    cash deal-type letter at position 3."""
+    if loyalty and conquest:
+        return "B"
+    if loyalty:
+        return "L"
+    if conquest:
+        return "C"
+    return ""
+
+
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
                          loyalty: bool, conquest: bool, special: str | None) -> str:
+    """Generate the 6-char-max SAP campaign code for a deal config.
+
+    `special` is no longer used to vary the code string — Arcane Works
+    is its own body_style and Iceland Tactical (still a SW trim
+    package) shares SW codes. Per-program eligibility filtering still
+    happens at the program-rule layer, so an Iceland-targeted program
+    only attaches to the SW codes it qualifies for.
     """
-    Generate a campaign code string. Letters only — no digits — so
-    SAP accepts the code. MY25 / MY26 / MY27 produce distinct codes
-    via the MY_TO_LETTER mapping (S / T / V), matching the VIN-MY
-    convention so the suffix is mnemonic rather than arbitrary.
-
-    Format: <prefix><body><my_letter>[<flags>].
-    """
-
-    # Body short codes used inside the campaign code string. AW = the
-    # Arcane Works G13C body (its own model code, not a SW variant).
-    if body_style == "quartermaster":
-        body_short = "QM"
-    elif body_style == "arcane_works":
-        body_short = "AW"
-    else:
-        body_short = "SW"
-
-    # MY letter (S / T / V / ...) — required so different model years
-    # never collide on the same code string. Falls back to "" when MY
-    # is missing or unmapped, which keeps the function pure but means
-    # the matrix dedup will collapse cross-MY codes for unknown years.
+    body_letter = _BODY_LETTER.get(body_style, "S")
     my_letter = MY_TO_LETTER.get(model_year or "", "")
+    dt_letter = _DT_LETTER.get(deal_type, "C")
 
-    # ── Special editions (Arcane Works, Iceland Tactical) ──
-    # Body, deal-type, AND flag suffix all matter — the previous
-    # version omitted body + deal-type, so SW vs QM and cash vs apr
-    # vs lease all collided on the same string and matrix dedup
-    # silently dropped the loser. End state: only one code per
-    # special edition + MY survived, so picking Arcane MY25 SW Cash
-    # in the wizard returned 404 because the matrix only had the QM
-    # variant of "USARDSC".
-    if special:
-        sp_map = {"arcane_works_detour": "ARD", "iceland_tactical": "ICE"}
-        sp = sp_map.get(special, special[:3].upper())
-        flag_suffix = ""
-        if loyalty and conquest:
-            flag_suffix = "LC"
-        elif loyalty:
-            flag_suffix = "L"
-        elif conquest:
-            flag_suffix = "C"
-        # Single-letter deal-type prefix keeps the code under
-        # MAX_CODE_LEN. C/A/L/V/D match the cash/apr/lease/cvp/demo
-        # convention of the non-special branches above.
-        dt_letter = {"cash": "C", "apr": "A", "lease": "L", "cvp": "V", "demo": "D"}.get(deal_type, "")
-        return f"US{sp}{body_short}{my_letter}{dt_letter}{flag_suffix}"[:MAX_CODE_LEN]
+    # CVP and Demo never carry loyalty/conquest flags — they're
+    # standalone retail channels by convention. Skip the flag suffix
+    # so the matrix dedup doesn't emit redundant L/C variants.
+    if deal_type in ("cvp", "demo"):
+        flag = ""
+    else:
+        flag = _flag_letter(loyalty, conquest)
 
-    # ── CVP ──  USCVP + body + my  (e.g. USCVPSWT, USCVPQMS)
-    # Body must appear in the code, otherwise SW and QM collapse to
-    # the same string and the matrix dedup drops one — that was the
-    # cause of the missing station-wagon CVP code.
-    if deal_type == "cvp":
-        return f"USCVP{body_short}{my_letter}"[:MAX_CODE_LEN]
-
-    # ── Demonstrator ──  USDEM + body + my  (same dedup reason)
-    if deal_type == "demo":
-        return f"USDEM{body_short}{my_letter}"[:MAX_CODE_LEN]
-
-    flag_suffix = ""
-    if loyalty and conquest:
-        flag_suffix = "LC"
-    elif loyalty:
-        flag_suffix = "L"
-    elif conquest:
-        flag_suffix = "C"
-
-    # ── Cash deals ──  USC + body + my + flags  (e.g. USCSWT, USCQMTL, USCSWSLC)
-    if deal_type == "cash":
-        return f"USC{body_short}{my_letter}{flag_suffix}"[:MAX_CODE_LEN]
-
-    # ── APR deals ──  USA + body + my + flags  (e.g. USASWT, USAQMTL)
-    if deal_type == "apr":
-        return f"USA{body_short}{my_letter}{flag_suffix}"[:MAX_CODE_LEN]
-
-    # ── Lease deals ──  USL + body + my + flags  (e.g. USLSWT, USLQMTL)
-    if deal_type == "lease":
-        return f"USL{body_short}{my_letter}{flag_suffix}"[:MAX_CODE_LEN]
-
-    # Fallback
-    return f"US{body_short}{my_letter}"[:MAX_CODE_LEN]
+    code = f"US{dt_letter}{body_letter}{my_letter}{flag}"
+    # Final guardrail — should never trigger given the layout above,
+    # but truncating beats producing a code SAP rejects mid-deal.
+    return code[:MAX_CODE_LEN]
 
 
 def evaluate_rule(rule: ProgramRule, config: dict) -> bool:
