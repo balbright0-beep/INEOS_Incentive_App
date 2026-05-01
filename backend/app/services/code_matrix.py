@@ -100,7 +100,8 @@ def _flag_letter(loyalty: bool, conquest: bool) -> str:
 
 
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
-                         loyalty: bool, conquest: bool, special: str | None) -> str:
+                         loyalty: bool, conquest: bool, special: str | None,
+                         base: bool = False) -> str:
     """Generate the 6-char-max SAP campaign code for a deal config.
 
     `special` is no longer used to vary the code string — Arcane Works
@@ -108,10 +109,22 @@ def generate_code_string(body_style: str, model_year: str, deal_type: str,
     package) shares SW codes. Per-program eligibility filtering still
     happens at the program-rule layer, so an Iceland-targeted program
     only attaches to the SW codes it qualifies for.
+
+    `base=True` returns the base/no-incentive code for the (body x MY x
+    deal_type) combo — distinct from the auto-stacked code that gets
+    emitted when programs match. Suffix Z marks "Zero programs" so a
+    dealer entering a deal where the customer takes none of the
+    available programs has a clean SAP code to use. Z doesn't collide
+    with the L/C/B flag letters used on stacked variants.
     """
     body_letter = _BODY_LETTER.get(body_style, "S")
     my_letter = MY_TO_LETTER.get(model_year or "", "")
     dt_letter = _DT_LETTER.get(deal_type, "C")
+
+    if base:
+        # Base codes never carry loyalty/conquest flags — they
+        # represent the "no incentives selected" baseline, period.
+        return f"US{dt_letter}{body_letter}{my_letter}Z"[:MAX_CODE_LEN]
 
     # CVP and Demo never carry loyalty/conquest flags — they're
     # standalone retail channels by convention. Skip the flag suffix
@@ -381,6 +394,47 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
             "new_amount": total_amount,
             "change_type": change_type,
             "layers": matching_layers,
+            "effective_date": None,
+            "expiration_date": None,
+        })
+
+    # ── Base / no-incentive codes ──
+    #
+    # Always emit a base $0 code per (body x MY x cash/apr/lease/demo)
+    # combo regardless of which programs match. Distinct code string
+    # (Z suffix) so the dealer has something to enter in SAP when the
+    # customer takes none of the available auto-stacked programs. CVP
+    # is excluded — it's a standalone channel and the matrix only
+    # makes a CVP code when a specific CVP program applies.
+    base_emitted: set[str] = set()
+    for config in configs:
+        deal_type = config["finance_type"]
+        if deal_type == "cvp":
+            continue
+        if config["loyalty"] or config["conquest"] or config.get("special_edition"):
+            continue
+        base_code = generate_code_string(
+            config["body_style"], config["model_year"], deal_type,
+            False, False, None, base=True,
+        )
+        if base_code in base_emitted:
+            continue
+        base_emitted.add(base_code)
+        body_label = "Arcane Works" if config["body_style"] == "arcane_works" else config["body_style"].replace("_", " ").title()
+        label = f"{config['model_year']} {body_label} {deal_type.upper()} (Base — no incentives)"
+        new_matrix.append({
+            "code": base_code,
+            "label": label,
+            "model_year": config["model_year"],
+            "body_style": config["body_style"],
+            "deal_type": deal_type,
+            "loyalty_flag": False,
+            "conquest_flag": False,
+            "special_flag": None,
+            "current_amount": None,
+            "new_amount": 0.0,
+            "change_type": "new",
+            "layers": [],
             "effective_date": None,
             "expiration_date": None,
         })
