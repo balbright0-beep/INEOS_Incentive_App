@@ -170,8 +170,32 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
         db, deal_type, req, customer_state, layers_data, public_only,
     )
 
+    # Base "no incentives" code for this (body x MY x deal_type). The
+    # frontend swaps the chip to this when the customer takes none of
+    # the available auto-stacked programs — distinct from the bundled
+    # code so SAP correctly records the no-incentive deal. Matched by
+    # body+MY+deal_type with loyalty/conquest/special all false/null
+    # and the support_amount = 0 (every base row in the matrix).
+    base_code_row = (
+        db.query(CampaignCode)
+        .filter(
+            CampaignCode.active == True,
+            CampaignCode.body_style == req.body_style,
+            CampaignCode.deal_type == deal_type,
+            CampaignCode.loyalty_flag == False,  # noqa: E712
+            CampaignCode.conquest_flag == False,  # noqa: E712
+            CampaignCode.support_amount == 0,
+            (CampaignCode.special_flag == None) | (CampaignCode.special_flag == ""),  # noqa: E711
+            CampaignCode.code.like("%Z"),
+        )
+    )
+    if req.model_year:
+        base_code_row = base_code_row.filter(CampaignCode.model_year == req.model_year)
+    base_code_row = base_code_row.first()
+
     return LookupResponse(
         code=code.code,
+        base_code=base_code_row.code if base_code_row else None,
         total_support_amount=total_amount,
         label=code.label or "",
         layers=layers,

@@ -44,6 +44,14 @@ class EligibleProgram(BaseModel):
 
 class LookupResponse(BaseModel):
     code: str
+    # Base / no-incentive code for the same (body x MY x deal_type)
+    # combo. The frontend swaps to this when the customer takes none
+    # of the auto-stacked programs so SAP records the no-incentive
+    # deal under the correct campaign code (e.g. USCSSZ instead of
+    # USCSS at $0). Always populated on a successful lookup; None
+    # only if a base row is missing from the matrix (treat as a
+    # fallback to `code`).
+    base_code: Optional[str] = None
     total_support_amount: float
     label: str
     layers: list[IncentiveLayer]

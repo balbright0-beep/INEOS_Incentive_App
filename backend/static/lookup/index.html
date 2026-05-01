@@ -1170,13 +1170,19 @@
       //     → show NO INCENTIVE chip (it's an explicit opt-out).
       const noEligible = (eligible || []).length === 0;
       const showNoIncentiveChip = total === 0 && !noEligible;
+      // Use the dedicated base code (USCSSZ etc.) when total is 0 so
+      // SAP records the no-incentive deal under the right campaign
+      // code instead of the bundled-stack one. Falls back to r.code
+      // if the matrix doesn't have a base row for this combo (older
+      // matrix builds didn't emit them).
+      const displayedCode = (total === 0 && r.base_code) ? r.base_code : r.code;
       const codeBlock = showNoIncentiveChip
         ? `<div style="display:inline-block;background:#9F9F9F;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
              <span style="font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.08em;font-weight:600">NO INCENTIVE</span>
            </div>
            <p style="font-size:12.5px;color:#606060;margin-top:6px">Customer doesn't qualify for available programs.</p>`
         : `<div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
-             <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
+             <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(displayedCode)}</span>
            </div>
            <p style="font-size:32px;font-weight:700;color:${totalColor};margin:0">${fmtMoney(total)}</p>
            <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">${noEligible ? 'Base code for this deal type \u2014 no incentive programs apply' : totalChanged ? `Adjusted from default ${fmtMoney(r.total_support_amount)} based on selection` : 'Total Support Amount'}${r.label ? ' \u00b7 ' + escapeHtml(r.label) : ''}</p>`;
@@ -1425,13 +1431,13 @@
       const sel = _computeSelection();
       const { eligible, total, conflictSet, noEligible, totalChanged } = sel;
 
-      // Always show the campaign code chip \u2014 even when total=0. The
-      // backend's r.code is already the base code for the deal type
-      // (e.g., USLSWT for MY26 SW Lease) once the variant-swap logic
-      // has cleared loyalty/conquest flags from the empty selection,
-      // so the retailer always has something to enter in SAP. The
-      // sub-label below tells them whether incentives stacked, were
-      // adjusted, or are absent entirely.
+      // Always show the campaign code chip \u2014 even when total=0. When
+      // there are no incentives selected the chip swaps to the
+      // dedicated base code (USCSSZ etc.) so SAP records the deal
+      // under the right campaign code. r.base_code is supplied by
+      // lookup_incentive; if it's missing (older matrix without base
+      // rows), fall back to r.code so the chip still has something.
+      const displayedCode = (total === 0 && r.base_code) ? r.base_code : r.code;
       const subLabel = total === 0
         ? (noEligible
             ? 'Base code for this deal type \u2014 no incentive programs apply'
@@ -1442,7 +1448,7 @@
       const codeBlock = `
         <p class="eyebrow" style="margin:0 0 8px">Campaign Code to Enter in SAP</p>
         <div style="display:inline-block;background:#1D1D1D;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
-          <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(r.code)}</span>
+          <span style="font-family:'JetBrains Mono',monospace;font-size:30px;letter-spacing:0.18em;font-weight:700">${escapeHtml(displayedCode)}</span>
         </div>
         <p style="font-size:32px;font-weight:700;color:${total === 0 ? '#9F9F9F' : '#2C931E'};margin:0">${fmtMoney(total)}</p>
         <p style="font-size:12.5px;color:#9F9F9F;margin:4px 0 0">${escapeHtml(subLabel)}${r.label ? ' \u00b7 ' + escapeHtml(r.label) : ''}</p>`;
