@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Enum, Date, Numeric, Text, DateTime, Boolean, func, ForeignKey, JSON
+from sqlalchemy import Column, String, Enum, Date, Numeric, Text, DateTime, Boolean, func, ForeignKey, JSON, LargeBinary, Integer
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -87,6 +87,31 @@ class ProgramRule(Base):
     value = Column(JSON, nullable=False)
 
     program = relationship("Program", back_populates="rules")
+
+
+class ProgramBulletin(Base):
+    """Admin-uploaded supplemental bulletins attached to a program.
+
+    Distinct from the auto-generated PDF bulletin (services/pdf_generator)
+    — that one's regenerated from the program's data on demand and
+    written to the OUTPUT_DIR. This model is for arbitrary additional
+    docs admins want to ship alongside (Q1 communications, OEM
+    updates, dealer FAQ, signed legal addenda, etc.). Bytes live in
+    the row so we don't depend on object storage; PDFs are typically
+    50KB-2MB and the dataset is bounded (a few per program), so the
+    weight is fine."""
+
+    __tablename__ = "program_bulletins"
+
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    program_id = Column(String, ForeignKey("programs.id", ondelete="CASCADE"), nullable=False, index=True)
+    filename = Column(String(300), nullable=False)
+    content_type = Column(String(100), nullable=False, default="application/pdf")
+    size_bytes = Column(Integer, nullable=False, default=0)
+    description = Column(String(500), nullable=True)
+    data = Column(LargeBinary, nullable=False)
+    uploaded_by = Column(String, nullable=True)  # User.id of the uploader
+    uploaded_at = Column(DateTime, server_default=func.now())
 
 
 class ProgramVin(Base):

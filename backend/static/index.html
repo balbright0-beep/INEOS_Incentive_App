@@ -693,6 +693,177 @@
       return out;
     }
 
+    // Supplemental bulletin attachments — separate from the auto-
+    // generated PDF the bulletin generator produces. Append-only:
+    // each upload creates a new row; admins can DELETE old revisions
+    // explicitly. Files are stored as bytes in the program_bulletins
+    // row so we don't need object storage.
+    function BulletinAttachments({ programId, isEdit, toast }) {
+      const [list, setList] = React.useState([]);
+      const [loading, setLoading] = React.useState(false);
+      const [uploading, setUploading] = React.useState(false);
+      const [description, setDescription] = React.useState('');
+      const fileRef = React.useRef(null);
+
+      const refresh = React.useCallback(() => {
+        if (!programId) return;
+        setLoading(true);
+        API.get(`/programs/${programId}/bulletins`)
+          .then(r => setList(r.bulletins || []))
+          .catch(() => {})
+          .finally(() => setLoading(false));
+      }, [programId]);
+
+      React.useEffect(() => { refresh(); }, [refresh]);
+
+      async function handleFile(e) {
+        const file = e.target.files?.[0];
+        if (!file || !programId) return;
+        setUploading(true);
+        try {
+          // API.upload doesn't take extra fields, so post the multipart
+          // ourselves. Auth header comes from API.token.
+          const fd = new FormData();
+          fd.append('file', file);
+          if (description.trim()) fd.append('description', description.trim());
+          const headers = {};
+          if (API.token) headers['Authorization'] = `Bearer ${API.token}`;
+          const resp = await fetch(`/api/programs/${programId}/bulletins`, {
+            method: 'POST', headers, body: fd, credentials: 'include',
+          });
+          if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || 'Upload failed');
+          }
+          toast.show('Bulletin uploaded');
+          setDescription('');
+          refresh();
+        } catch (err) {
+          toast.show(err.message || 'Upload failed', 'error');
+        } finally {
+          setUploading(false);
+          if (fileRef.current) fileRef.current.value = '';
+        }
+      }
+
+      async function handleDelete(b) {
+        if (!confirm(`Remove "${b.filename}"? This can't be undone.`)) return;
+        try {
+          await API.del(`/programs/${programId}/bulletins/${b.id}`);
+          toast.show('Bulletin removed');
+          refresh();
+        } catch (err) {
+          toast.show(err.message || 'Could not remove', 'error');
+        }
+      }
+
+      // Auth-aware download — the GET endpoint requires Bearer token,
+      // so a plain <a href> won't work. Fetch the blob ourselves and
+      // trigger the download with createObjectURL.
+      async function handleDownload(b) {
+        try {
+          const headers = {};
+          if (API.token) headers['Authorization'] = `Bearer ${API.token}`;
+          const resp = await fetch(`/api/programs/${programId}/bulletins/${b.id}`, { headers });
+          if (!resp.ok) throw new Error('Download failed');
+          const blob = await resp.blob();
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = b.filename;
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          URL.revokeObjectURL(url);
+        } catch (err) {
+          toast.show(err.message || 'Could not download', 'error');
+        }
+      }
+
+      const fmtSize = (n) => {
+        if (n < 1024) return `${n} B`;
+        if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+        return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+      };
+      const fmtDate = (s) => {
+        if (!s) return '';
+        try { return new Date(s.replace(' ', 'T') + 'Z').toLocaleDateString(); }
+        catch { return s; }
+      };
+
+      if (!isEdit || !programId) {
+        return (
+          <div className="p-4 rounded border border-dashed border-flare-red/40 bg-flare-red/5 text-sm text-onyx">
+            <div className="font-semibold mb-1">Supplemental bulletins</div>
+            <p className="text-iron-smoke">Save the program first (as a draft), then re-open it from the program list to attach extra bulletins (Q1 communications, OEM updates, signed addenda, etc.).</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="p-4 rounded border border-dove bg-mushroom-light/60 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-semibold uppercase tracking-wider text-onyx">Supplemental Bulletins</div>
+              <div className="text-xs text-iron-smoke mt-0.5">
+                Extra documents to ship alongside this program (PDF, Word, Excel, image — max 20MB each).
+              </div>
+            </div>
+            <div className="text-right">
+              <div className="text-2xl font-bold text-onyx leading-none">{list.length}</div>
+              <div className="text-xs text-iron-smoke">on file</div>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input
+              type="text"
+              value={description}
+              onChange={e => setDescription(e.target.value)}
+              placeholder="Description (optional, e.g. 'Q2 OEM update v2')"
+              className="flex-1 px-3 py-2 border border-mushroom rounded text-sm"
+            />
+            <label className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded bg-onyx text-white text-sm font-medium cursor-pointer hover:bg-onyx/90 whitespace-nowrap">
+              <input ref={fileRef} type="file"
+                accept=".pdf,.doc,.docx,.xls,.xlsx,.png,.jpg,.jpeg"
+                className="hidden"
+                onChange={handleFile} disabled={uploading} />
+              {uploading ? 'Uploading…' : 'Attach Bulletin'}
+            </label>
+          </div>
+
+          {loading && <div className="text-xs text-silver-dust">Loading…</div>}
+
+          {list.length > 0 && (
+            <div className="space-y-1.5">
+              {list.map(b => (
+                <div key={b.id} className="flex items-center justify-between gap-3 p-2.5 bg-white rounded border border-dove">
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-onyx truncate">{b.filename}</div>
+                    <div className="text-xs text-iron-smoke flex flex-wrap gap-x-3">
+                      <span>{fmtSize(b.size_bytes)}</span>
+                      <span>{fmtDate(b.uploaded_at)}</span>
+                      {b.description && <span className="italic">"{b.description}"</span>}
+                    </div>
+                  </div>
+                  <div className="flex gap-2 shrink-0">
+                    <button type="button" onClick={() => handleDownload(b)}
+                      className="text-xs px-2 py-1 rounded border border-dove text-onyx hover:bg-mushroom-light">
+                      Download
+                    </button>
+                    <button type="button" onClick={() => handleDelete(b)}
+                      className="text-xs px-2 py-1 rounded border border-flare-red/30 text-flare-red hover:bg-flare-red/5">
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     // VIN list uploader for vin_specific programs. Replace-all
     // semantics — uploading a new spreadsheet wipes the previous list.
     // Renders an empty-state when no rows yet, plus inline controls to
@@ -1264,6 +1435,12 @@
                   toast={toast}
                 />
               )}
+
+              <BulletinAttachments
+                programId={isEdit ? editProgram.id : null}
+                isEdit={isEdit}
+                toast={toast}
+              />
 
               <div className="p-4 bg-mushroom-light rounded border border-dove space-y-2">
                 <h4 className="font-semibold text-sm uppercase tracking-wider text-onyx mb-3">Program Review</h4>

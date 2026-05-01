@@ -1,10 +1,11 @@
 import uuid
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from decimal import Decimal
 from app.database import get_db
-from app.models.program import Program, ProgramRule, ProgramVin
+from app.models.program import Program, ProgramRule, ProgramVin, ProgramBulletin
 from app.models.budget import Budget, AuditLog
 from app.models.transaction import DealTransaction
 from app.models.campaign_code import CampaignCodeLayer
@@ -584,3 +585,190 @@ def clear_program_vins(
     ))
     db.commit()
     return {"program_id": program_id, "removed": deleted}
+
+
+# ── Supplemental bulletin attachments ──
+#
+# Distinct from the auto-generated PDF bulletin (services/pdf_generator
+# regenerates that one on demand from the program's data). These are
+# arbitrary files an admin uploads to ride alongside — Q1 communications,
+# OEM updates, signed legal addenda, dealer FAQ, etc. Stored as bytes
+# in the row so we don't depend on object storage; PDFs are typically
+# small and the dataset is bounded.
+#
+# Cap individual uploads at 20MB to keep DB rows reasonable. Anything
+# bigger likely belongs on a CDN / object store, which we don't have
+# wired up yet.
+_BULLETIN_MAX_BYTES = 20 * 1024 * 1024
+_BULLETIN_ALLOWED_CTYPES = {
+    "application/pdf",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "image/png", "image/jpeg",
+}
+
+
+@router.get("/{program_id}/bulletins")
+def list_program_bulletins(
+    program_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """List supplemental bulletins for a program (metadata only — the
+    binary payload is fetched separately via GET /bulletins/{id})."""
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+    rows = (
+        db.query(ProgramBulletin)
+        .filter(ProgramBulletin.program_id == program_id)
+        .order_by(ProgramBulletin.uploaded_at.desc())
+        .all()
+    )
+    return {
+        "program_id": program_id,
+        "count": len(rows),
+        "bulletins": [
+            {
+                "id": b.id,
+                "filename": b.filename,
+                "content_type": b.content_type,
+                "size_bytes": b.size_bytes,
+                "description": b.description,
+                "uploaded_by": b.uploaded_by,
+                "uploaded_at": str(b.uploaded_at) if b.uploaded_at else None,
+            }
+            for b in rows
+        ],
+    }
+
+
+@router.post("/{program_id}/bulletins")
+async def upload_program_bulletin(
+    program_id: str,
+    file: UploadFile = File(...),
+    description: str = Form(default=""),
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Attach a supplemental bulletin to a program. Append-only —
+    re-uploading the same filename creates a new row rather than
+    replacing, since the new file may be a revision the admin wants
+    to keep alongside the previous version. Use DELETE to drop old
+    revisions explicitly."""
+    prog = db.query(Program).filter(Program.id == program_id).first()
+    if not prog:
+        raise HTTPException(status_code=404, detail="Program not found")
+
+    contents = await file.read()
+    if not contents:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(contents) > _BULLETIN_MAX_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"File too large ({len(contents):,} bytes). Max is "
+                   f"{_BULLETIN_MAX_BYTES // (1024 * 1024)}MB.",
+        )
+
+    ctype = (file.content_type or "application/octet-stream").lower()
+    if ctype not in _BULLETIN_ALLOWED_CTYPES:
+        # Be lenient on the unknown-content-type case — if the
+        # filename ends in .pdf assume PDF. Browsers occasionally
+        # report octet-stream for files dragged from Finder/Explorer.
+        if file.filename and file.filename.lower().endswith(".pdf"):
+            ctype = "application/pdf"
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Unsupported file type '{ctype}'. Accepted: PDF, "
+                       "Word, Excel, PNG, JPEG.",
+            )
+
+    bulletin = ProgramBulletin(
+        program_id=program_id,
+        filename=(file.filename or "bulletin")[:300],
+        content_type=ctype,
+        size_bytes=len(contents),
+        description=(description or "").strip()[:500] or None,
+        data=contents,
+        uploaded_by=user.id,
+    )
+    db.add(bulletin)
+    db.add(AuditLog(
+        entity_type="program", entity_id=program_id,
+        action="bulletin_uploaded", user_id=user.id,
+        details={"filename": bulletin.filename, "size_bytes": bulletin.size_bytes},
+    ))
+    db.commit()
+    db.refresh(bulletin)
+    return {
+        "id": bulletin.id,
+        "filename": bulletin.filename,
+        "content_type": bulletin.content_type,
+        "size_bytes": bulletin.size_bytes,
+        "description": bulletin.description,
+        "uploaded_at": str(bulletin.uploaded_at) if bulletin.uploaded_at else None,
+    }
+
+
+@router.get("/{program_id}/bulletins/{bulletin_id}")
+def download_program_bulletin(
+    program_id: str,
+    bulletin_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Stream the binary payload back with the original content-type
+    + filename so browsers render PDFs inline and force a download
+    for everything else."""
+    bulletin = (
+        db.query(ProgramBulletin)
+        .filter(
+            ProgramBulletin.id == bulletin_id,
+            ProgramBulletin.program_id == program_id,
+        )
+        .first()
+    )
+    if not bulletin:
+        raise HTTPException(status_code=404, detail="Bulletin not found")
+    # PDFs render inline so admins can preview without saving; other
+    # types force a download since browsers can't preview them.
+    disposition = "inline" if bulletin.content_type == "application/pdf" else "attachment"
+    safe_name = bulletin.filename.replace('"', '')
+    return Response(
+        content=bulletin.data,
+        media_type=bulletin.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
+    )
+
+
+@router.delete("/{program_id}/bulletins/{bulletin_id}")
+def delete_program_bulletin(
+    program_id: str,
+    bulletin_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(require_admin),
+):
+    """Remove a supplemental bulletin. The auto-generated PDF
+    bulletin (re-rendered from program data) is unaffected."""
+    bulletin = (
+        db.query(ProgramBulletin)
+        .filter(
+            ProgramBulletin.id == bulletin_id,
+            ProgramBulletin.program_id == program_id,
+        )
+        .first()
+    )
+    if not bulletin:
+        raise HTTPException(status_code=404, detail="Bulletin not found")
+    filename = bulletin.filename
+    db.delete(bulletin)
+    db.add(AuditLog(
+        entity_type="program", entity_id=program_id,
+        action="bulletin_deleted", user_id=user.id,
+        details={"bulletin_id": bulletin_id, "filename": filename},
+    ))
+    db.commit()
+    return {"deleted": bulletin_id, "filename": filename}
