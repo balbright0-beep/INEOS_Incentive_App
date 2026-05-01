@@ -425,6 +425,108 @@
       50%      { box-shadow: 0 0 0 5px rgba(255, 70, 57, 0.04); }
     }
 
+    /* Compact action buttons used in supplemental bulletin rows on
+       the Program Documents tab. Same look whether <a> or <button>. */
+    .bulletin-action {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: #1D1D1D;
+      background: #fff;
+      border: 1px solid #D9D7D0;
+      border-radius: 4px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: background-color 0.12s ease, border-color 0.12s ease;
+    }
+    .bulletin-action:hover {
+      background: #1D1D1D;
+      color: #fff;
+      border-color: #1D1D1D;
+    }
+
+    /* In-page bulletin preview overlay */
+    .bulletin-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      z-index: 1000;
+      display: flex;
+      align-items: stretch;
+      justify-content: center;
+      padding: 24px;
+      animation: fadeIn 0.18s ease-out;
+    }
+    .bulletin-overlay-window {
+      background: #fff;
+      border-radius: 8px;
+      width: 100%;
+      max-width: 1100px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+    }
+    .bulletin-overlay-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 12px 18px;
+      background: #1D1D1D;
+      color: #fff;
+      flex-shrink: 0;
+    }
+    .bulletin-overlay-title {
+      font-size: 13px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      flex: 1;
+      min-width: 0;
+    }
+    .bulletin-overlay-actions {
+      display: flex;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+    .bulletin-overlay-actions a,
+    .bulletin-overlay-actions button {
+      background: transparent;
+      color: #fff;
+      border: 1px solid rgba(255, 255, 255, 0.35);
+      padding: 5px 12px;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      font-weight: 600;
+      border-radius: 4px;
+      cursor: pointer;
+      text-decoration: none;
+      transition: background-color 0.12s ease;
+    }
+    .bulletin-overlay-actions a:hover,
+    .bulletin-overlay-actions button:hover {
+      background: rgba(255, 255, 255, 0.12);
+    }
+    .bulletin-overlay-frame {
+      flex: 1;
+      width: 100%;
+      border: 0;
+      background: #525659; /* matches Chrome's PDF viewer chrome */
+    }
+
     /* Wizard buttons */
     .btn-secondary {
       display: inline-flex;
@@ -1670,6 +1772,50 @@
     };
 
     // Export to customer-facing PDF flow
+    // In-page bulletin preview overlay. The bulletin endpoints serve
+    // PDFs with Content-Disposition: inline so a plain iframe src
+    // renders the PDF using the browser's built-in viewer (Chrome,
+    // Firefox, Safari, Edge all ship one). Closes on click-outside,
+    // ESC, or the X button. The Download button in the header
+    // re-uses the same URL with a download attribute so the user
+    // can save without leaving the preview.
+    window._openBulletinPreview = function (url, title) {
+      const existing = document.getElementById('bulletin-overlay');
+      if (existing) existing.remove();
+      const overlay = document.createElement('div');
+      overlay.id = 'bulletin-overlay';
+      overlay.className = 'bulletin-overlay';
+      overlay.innerHTML = `
+        <div class="bulletin-overlay-window" onclick="event.stopPropagation()">
+          <div class="bulletin-overlay-header">
+            <div class="bulletin-overlay-title">${escapeHtml(title || 'Bulletin')}</div>
+            <div class="bulletin-overlay-actions">
+              <a href="${url}" download="${escapeHtml(title || 'bulletin.pdf')}">↓ Download</a>
+              <a href="${url}" target="_blank" rel="noopener">↗ Open in tab</a>
+              <button type="button" onclick="_closeBulletinPreview()">Close</button>
+            </div>
+          </div>
+          <iframe class="bulletin-overlay-frame" src="${url}" title="${escapeHtml(title || 'Bulletin')}"></iframe>
+        </div>`;
+      overlay.addEventListener('click', _closeBulletinPreview);
+      document.addEventListener('keydown', _bulletinOverlayKeyHandler);
+      document.body.appendChild(overlay);
+      // Lock body scroll while the overlay's open so the page doesn't
+      // jump when the user scrolls inside the iframe.
+      document.body.style.overflow = 'hidden';
+    };
+
+    window._closeBulletinPreview = function () {
+      const el = document.getElementById('bulletin-overlay');
+      if (el) el.remove();
+      document.removeEventListener('keydown', _bulletinOverlayKeyHandler);
+      document.body.style.overflow = '';
+    };
+
+    function _bulletinOverlayKeyHandler(e) {
+      if (e.key === 'Escape') _closeBulletinPreview();
+    }
+
     //
     // The user picks a detail level in a small modal, the current
     // wizard state (vehicle + selected programs + calc inputs) is
@@ -2267,6 +2413,13 @@
           totalDocs += 1; // auto-generated bulletin
           const supplementals = (p.bulletins || []);
           totalDocs += supplementals.length;
+          // Each bulletin row gets two affordances: Preview (opens
+          // an in-page overlay with an iframe) and Download (forces
+          // a save). Word/Excel attachments don't have inline
+          // browser preview support, so the Preview button is gated
+          // to PDFs + images and falls back to "open in new tab" for
+          // other types.
+          const previewable = (ctype) => /^(application\/pdf|image\/)/.test(ctype || '');
           const supplementalRows = supplementals.length ? `
             <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #E9E8E5">
               <div style="font-size:10px;color:#9F9F9F;font-family:'JetBrains Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px">
@@ -2275,18 +2428,25 @@
               ${supplementals.map(b => {
                 const sizeStr = fmtSize(b.size_bytes);
                 const descStr = b.description ? `<span style="margin-left:6px;font-style:italic;color:#606060">"${escapeHtml(b.description)}"</span>` : '';
+                const url = `/api/programs/${encodeURIComponent(p.id)}/bulletins/${encodeURIComponent(b.id)}/public`;
+                const previewBtn = previewable(b.content_type)
+                  ? `<button type="button" class="bulletin-action" onclick="_openBulletinPreview(${JSON.stringify(url).replace(/"/g, '&quot;')}, ${JSON.stringify(b.filename).replace(/"/g, '&quot;')})">Preview</button>`
+                  : '';
                 return `
                   <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px">
-                    <a href="/api/programs/${encodeURIComponent(p.id)}/bulletins/${encodeURIComponent(b.id)}/public"
-                      target="_blank" rel="noopener"
-                      style="color:#1D1D1D;text-decoration:none;font-weight:500;border-bottom:1px solid #E9E8E5;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                    <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#1D1D1D;font-weight:500">
                       ${escapeHtml(b.filename)}
-                    </a>
+                    </span>
                     <span style="font-size:11px;color:#9F9F9F;flex-shrink:0">${escapeHtml(sizeStr)}</span>
                     ${descStr}
+                    <span style="display:flex;gap:6px;flex-shrink:0">
+                      ${previewBtn}
+                      <a class="bulletin-action" href="${url}" download="${escapeHtml(b.filename)}">Download</a>
+                    </span>
                   </div>`;
               }).join('')}
             </div>` : '';
+          const autoBulletinUrl = `/api/settings/public/bulletin/${encodeURIComponent(p.id)}`;
           return `
             <div class="doc-card">
               <div style="flex:1;min-width:0">
@@ -2298,7 +2458,13 @@
                 </div>
                 ${supplementalRows}
               </div>
-              <a class="download-btn" href="/api/settings/public/bulletin/${encodeURIComponent(p.id)}" download>\u2193 Bulletin (PDF)</a>
+              <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0">
+                <button type="button" class="download-btn" style="background:transparent;color:#1D1D1D;border:1px solid #1D1D1D"
+                  onclick="_openBulletinPreview(${JSON.stringify(autoBulletinUrl).replace(/"/g, '&quot;')}, ${JSON.stringify(p.name + ' \u2014 Bulletin.pdf').replace(/"/g, '&quot;')})">
+                  \ud83d\udc41 Preview
+                </button>
+                <a class="download-btn" href="${autoBulletinUrl}" download>\u2193 Download</a>
+              </div>
             </div>`;
         }).join('');
         panel.innerHTML = `
