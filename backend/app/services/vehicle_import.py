@@ -81,7 +81,14 @@ def _parse_trim(trim_str: str) -> str:
         return "Trialmaster"
     if "TRIALMASTER" in t and "X" in t:
         return "Trialmaster"
-    if "BELSTAFF" in t or "BLACK EDITION" in t:
+    # Black Edition is its own MY26+ trim — distinct from the legacy
+    # MY25-era Belstaff co-branding. The system used to coalesce
+    # them, which silently mislabeled MY26 Black Edition vehicles
+    # as Belstaff. Order matters: check the more-specific "BLACK
+    # EDITION" first because some sources use both words.
+    if "BLACK EDITION" in t:
+        return "Black Edition"
+    if "BELSTAFF" in t:
         return "Belstaff"
     if "HIGHLANDS" in t:
         return "Highlands"

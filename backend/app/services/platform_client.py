@@ -118,7 +118,11 @@ def _normalize_trim(trim: str | None) -> str | None:
         return "Fieldmaster"
     if "TRIALMASTER" in t:
         return "Trialmaster"
-    if "BELSTAFF" in t or "BLACK EDITION" in t:
+    # Black Edition (MY26+) is a distinct trim from the legacy
+    # MY25 Belstaff co-brand. Check the more-specific phrase first.
+    if "BLACK EDITION" in t:
+        return "Black Edition"
+    if "BELSTAFF" in t:
         return "Belstaff"
     if "HIGHLANDS" in t:
         return "Highlands"

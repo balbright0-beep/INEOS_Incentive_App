@@ -1181,7 +1181,7 @@
       const _activeProducts = (products || []).filter(p => p.active !== false);
       const _bodyStyleSeeds = ['station_wagon', 'quartermaster', 'arcane_works'];
       const _modelYearSeeds = ['MY25', 'MY26', 'MY27'];
-      const _trimSeeds = ['Base', 'Fieldmaster', 'Belstaff', 'Trialmaster', 'Highlands'];
+      const _trimSeeds = ['Base', 'Fieldmaster', 'Belstaff', 'Black Edition', 'Trialmaster', 'Highlands'];
 
       const _formatBody = (b) => (b || '').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
       const _formatMy   = (my) => `${my && my.replace(/^MY/, '20')} (${my})`;
@@ -2169,7 +2169,8 @@
                 </div>
                 <Select label="Trim" value={vehicle.trim} onChange={e => updateVehicle('trim', e.target.value)} className="mb-4"
                   options={[{value:'',label:'Any'},{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},
-                    {value:'Belstaff',label:'Belstaff'},{value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'}]} />
+                    {value:'Belstaff',label:'Belstaff'},{value:'Black Edition',label:'Black Edition'},
+                    {value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'}]} />
 
                 <h3 className="font-semibold text-onyx mb-3 mt-5 uppercase text-xs tracking-wider">Customer Location</h3>
                 <Input label="ZIP Code" value={vehicle.zip_code} onChange={e => {
@@ -2787,6 +2788,7 @@
       const myOpts = [{value:'MY25',label:'MY25'},{value:'MY26',label:'MY26'},{value:'MY27',label:'MY27'}];
       const bodyOpts = [{value:'station_wagon',label:'Station Wagon'},{value:'quartermaster',label:'Quartermaster'}];
       const trimOpts = [{value:'Base',label:'Base'},{value:'Fieldmaster',label:'Fieldmaster'},{value:'Belstaff',label:'Belstaff'},
+        {value:'Black Edition',label:'Black Edition'},
         {value:'Trialmaster',label:'Trialmaster'},{value:'Highlands',label:'Highlands'},{value:'Arcane Works Detour',label:'Arcane Works Detour'},{value:'Iceland Tactical',label:'Iceland Tactical'}];
 
       if (loading) return <Spinner />;

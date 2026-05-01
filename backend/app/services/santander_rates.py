@@ -25,7 +25,13 @@ from openpyxl import load_workbook
 CPOS_TO_TRIM = {
     "BASE": "Base",
     "FIELD": "Fieldmaster",
-    "BLACK": "Belstaff",
+    # BLACK was previously mapped to Belstaff because the MY25 rate
+    # sheet pre-dated the rebrand — but for MY26 the BLACK CPOS code
+    # is the Black Edition trim. Mapping to "Black Edition" is the
+    # correct current-state name; legacy MY25 references that read
+    # "Belstaff" in source data are still preserved by the import-
+    # side normalizer (which keeps the BELSTAFF string distinct).
+    "BLACK": "Black Edition",
     "TRIAL": "Trialmaster",
     "HIGHL": "Highlands",
     "SVO": "Arcane Works Detour",

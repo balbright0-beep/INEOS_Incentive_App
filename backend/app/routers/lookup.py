@@ -243,7 +243,11 @@ def vin_lookup(vin: str, db: Session = Depends(get_db)):
         trim = vehicle.trim or "Base"
         t = trim.upper()
         if "FIELDMASTER" in t: trim = "Fieldmaster"
-        elif "BELSTAFF" in t or "BLACK EDITION" in t: trim = "Belstaff"
+        # Order matters — "BLACK EDITION" must check before "BELSTAFF"
+        # (Black Edition is the MY26+ trim; Belstaff is the legacy
+        # MY25 co-brand).
+        elif "BLACK EDITION" in t: trim = "Black Edition"
+        elif "BELSTAFF" in t: trim = "Belstaff"
         elif "TRIALMASTER" in t: trim = "Trialmaster"
         elif "HIGHLANDS" in t: trim = "Highlands"
         elif "ARCANE" in t: trim = "Arcane Works Detour"
