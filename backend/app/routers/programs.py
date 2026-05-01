@@ -103,11 +103,35 @@ def list_public_programs(db: Session = Depends(get_db)):
     (name, type, dates, per-unit amount, rules, description) and
     deliberately omits internal-only fields like spend-to-date,
     budget caps, and creator id.
+
+    bulletins[] surfaces the metadata for any admin-uploaded
+    supplemental bulletins on each program (Q1 communications, OEM
+    updates, signed addenda, etc.) so the public Program Documents
+    tab can render them as additional download buttons. Payloads
+    are fetched separately via /api/programs/{id}/bulletins/{bid}/public.
     """
     progs = db.query(Program).filter(
         Program.status == "active",
         Program.published == True,  # noqa: E712
     ).order_by(Program.effective_date.desc(), Program.name).all()
+    # Single grouped query so the public list isn't N+1.
+    prog_ids = [p.id for p in progs]
+    bulletins_by_prog: dict[str, list[dict]] = {}
+    if prog_ids:
+        for b in (
+            db.query(ProgramBulletin)
+            .filter(ProgramBulletin.program_id.in_(prog_ids))
+            .order_by(ProgramBulletin.uploaded_at.desc())
+            .all()
+        ):
+            bulletins_by_prog.setdefault(b.program_id, []).append({
+                "id": b.id,
+                "filename": b.filename,
+                "content_type": b.content_type,
+                "size_bytes": b.size_bytes,
+                "description": b.description,
+                "uploaded_at": str(b.uploaded_at) if b.uploaded_at else None,
+            })
     return [
         {
             "id": p.id,
@@ -122,6 +146,7 @@ def list_public_programs(db: Session = Depends(get_db)):
                 {"rule_type": r.rule_type, "operator": r.operator, "value": r.value}
                 for r in p.rules
             ],
+            "bulletins": bulletins_by_prog.get(p.id, []),
         }
         for p in progs
     ]
@@ -735,6 +760,39 @@ def download_program_bulletin(
         raise HTTPException(status_code=404, detail="Bulletin not found")
     # PDFs render inline so admins can preview without saving; other
     # types force a download since browsers can't preview them.
+    disposition = "inline" if bulletin.content_type == "application/pdf" else "attachment"
+    safe_name = bulletin.filename.replace('"', '')
+    return Response(
+        content=bulletin.data,
+        media_type=bulletin.content_type or "application/octet-stream",
+        headers={"Content-Disposition": f'{disposition}; filename="{safe_name}"'},
+    )
+
+
+@router.get("/{program_id}/bulletins/{bulletin_id}/public")
+def download_program_bulletin_public(
+    program_id: str,
+    bulletin_id: str,
+    db: Session = Depends(get_db),
+):
+    """Public, unauthenticated download for the Program Documents tab
+    on the retail incentive finder. Production gate: only bulletins
+    on a published program are reachable. Bulletins on draft / staged
+    programs return 404 — same as the lookup endpoints — so the
+    public surface never leaks anything until an admin publishes."""
+    bulletin = (
+        db.query(ProgramBulletin)
+        .join(Program, Program.id == ProgramBulletin.program_id)
+        .filter(
+            ProgramBulletin.id == bulletin_id,
+            ProgramBulletin.program_id == program_id,
+            Program.status == "active",
+            Program.published == True,  # noqa: E712
+        )
+        .first()
+    )
+    if not bulletin:
+        raise HTTPException(status_code=404, detail="Bulletin not found")
     disposition = "inline" if bulletin.content_type == "application/pdf" else "attachment"
     safe_name = bulletin.filename.replace('"', '')
     return Response(

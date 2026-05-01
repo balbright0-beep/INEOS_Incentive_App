@@ -1876,6 +1876,20 @@
     const TAB_IDS = ['find', 'santander', 'programs', 'codes', 'docs'];
     const _tabLoaded = { find: true, santander: false, programs: false, codes: false, docs: false };
 
+    // PROGRAMS_LIST_URL / CODES_LIST_URL are read by loadPrograms /
+    // loadDocs / loadCodes. Hoisted up here next to TAB_IDS so a
+    // hash-deep-link to #docs or #programs that fires activateTab()
+    // (which calls the loader synchronously) doesn't trip the
+    // const-before-init TDZ. The fallback to the public endpoint when
+    // there's no admin token preserves the unauthenticated public flow.
+    const PROGRAMS_LIST_URL = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/programs?status=active' : '/api/programs/public';
+    const CODES_LIST_URL    = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/codes?active=true'      : '/api/codes/public';
+    const CODES_EXPORT_URL  = '/api/codes/public/export';
+
+    function authHeaders() {
+      return (PREVIEW_MODE && ADMIN_TOKEN) ? { 'Authorization': 'Bearer ' + ADMIN_TOKEN } : {};
+    }
+
     // Declared up here (not next to loadSantanderSummary further down)
     // so the activateTab(tabFromHash()) call below can fire
     // loadSantanderSummary on a #santander deep-link without hitting
@@ -2041,13 +2055,8 @@
     // are <a href> downloads though, so we can't attach a header —
     // those stay on the public endpoints (gated to live programs)
     // and admins use the SPA's PDF buttons for staged docs.
-    const PROGRAMS_LIST_URL = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/programs?status=active' : '/api/programs/public';
-    const CODES_LIST_URL    = (PREVIEW_MODE && ADMIN_TOKEN) ? '/api/codes?active=true'      : '/api/codes/public';
-    const CODES_EXPORT_URL  = '/api/codes/public/export';
-
-    function authHeaders() {
-      return (PREVIEW_MODE && ADMIN_TOKEN) ? { 'Authorization': 'Bearer ' + ADMIN_TOKEN } : {};
-    }
+    // (PROGRAMS_LIST_URL / CODES_LIST_URL / authHeaders are declared
+    // earlier in the file, hoisted next to TAB_IDS.)
 
     // ───────────── Live Programs tab ─────────────
     async function loadPrograms() {
@@ -2167,21 +2176,59 @@
         // bulletin endpoint via plain <a download>, so admins viewing
         // staged programs in preview see live-only PDFs here. That's
         // intentional: docs trail publish, not stage.
-        const cards = progs.map(p => `
-          <div class="doc-card">
-            <div style="flex:1;min-width:0">
-              <h4>${escapeHtml(p.name)}</h4>
-              <div class="meta">
-                <span class="pill-tag">${escapeHtml((p.program_type || '').replace('_', ' '))}</span>
-                <span style="margin-left:6px">Effective ${escapeHtml(p.effective_date || '\u2014')} \u2192 ${escapeHtml(p.expiration_date || '\u2014')}</span>
-                <span style="margin-left:6px;color:#1D1D1D">${fmtMoney(p.per_unit_amount)} per unit</span>
+        //
+        // Supplemental bulletins (admin-uploaded PDFs/Word/etc.) are
+        // attached as additional rows under the auto-generated bulletin
+        // for each program. They're served via the public bulletin
+        // download endpoint (gated to published programs server-side).
+        const fmtSize = (n) => {
+          if (!n && n !== 0) return '';
+          if (n < 1024) return `${n} B`;
+          if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+          return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+        };
+        let totalDocs = 0;
+        const cards = progs.map(p => {
+          totalDocs += 1; // auto-generated bulletin
+          const supplementals = (p.bulletins || []);
+          totalDocs += supplementals.length;
+          const supplementalRows = supplementals.length ? `
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed #E9E8E5">
+              <div style="font-size:10px;color:#9F9F9F;font-family:'JetBrains Mono',monospace;letter-spacing:0.08em;text-transform:uppercase;margin-bottom:6px">
+                Supplemental documents
               </div>
-            </div>
-            <a class="download-btn" href="/api/settings/public/bulletin/${encodeURIComponent(p.id)}" download>\u2193 Bulletin (PDF)</a>
-          </div>`).join('');
+              ${supplementals.map(b => {
+                const sizeStr = fmtSize(b.size_bytes);
+                const descStr = b.description ? `<span style="margin-left:6px;font-style:italic;color:#606060">"${escapeHtml(b.description)}"</span>` : '';
+                return `
+                  <div style="display:flex;align-items:center;gap:10px;padding:6px 0;font-size:13px">
+                    <a href="/api/programs/${encodeURIComponent(p.id)}/bulletins/${encodeURIComponent(b.id)}/public"
+                      target="_blank" rel="noopener"
+                      style="color:#1D1D1D;text-decoration:none;font-weight:500;border-bottom:1px solid #E9E8E5;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">
+                      ${escapeHtml(b.filename)}
+                    </a>
+                    <span style="font-size:11px;color:#9F9F9F;flex-shrink:0">${escapeHtml(sizeStr)}</span>
+                    ${descStr}
+                  </div>`;
+              }).join('')}
+            </div>` : '';
+          return `
+            <div class="doc-card">
+              <div style="flex:1;min-width:0">
+                <h4>${escapeHtml(p.name)}</h4>
+                <div class="meta">
+                  <span class="pill-tag">${escapeHtml((p.program_type || '').replace('_', ' '))}</span>
+                  <span style="margin-left:6px">Effective ${escapeHtml(p.effective_date || '\u2014')} \u2192 ${escapeHtml(p.expiration_date || '\u2014')}</span>
+                  <span style="margin-left:6px;color:#1D1D1D">${fmtMoney(p.per_unit_amount)} per unit</span>
+                </div>
+                ${supplementalRows}
+              </div>
+              <a class="download-btn" href="/api/settings/public/bulletin/${encodeURIComponent(p.id)}" download>\u2193 Bulletin (PDF)</a>
+            </div>`;
+        }).join('');
         panel.innerHTML = `
           <div style="margin-bottom:6px;font-size:11px;color:#9F9F9F;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em">
-            ${progs.length} bulletin${progs.length === 1 ? '' : 's'} available
+            ${progs.length} program${progs.length === 1 ? '' : 's'} \u00b7 ${totalDocs} document${totalDocs === 1 ? '' : 's'} total
           </div>
           ${cards}`;
       } catch (e) {
