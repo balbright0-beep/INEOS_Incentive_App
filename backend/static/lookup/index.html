@@ -1921,11 +1921,21 @@
     function _santanderRowsHtml(d) {
       const aprRows = d.apr || [];
       const leaseRows = d.lease || [];
-      const aprList = aprRows.length ? aprRows.map(r => `
-        <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
-          <span style="color:#606060">${r.term}mo</span>
-          <span class="mono" style="color:#1D1D1D;font-weight:600">${Number(r.apr).toFixed(2)}% APR</span>
-        </div>`).join('') : '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published APR offers this month.</div>';
+      // is_standard rows carry apr=null because Santander didn't publish
+      // a subvented number for that term — Number(null).toFixed(2) was
+      // rendering "0.00% APR" which read as "free financing!" (very
+      // wrong). Show the actual published number when there is one;
+      // otherwise label it as the Std. (non-subvented) Tier 1 rate the
+      // dealer quotes at deal time.
+      const aprList = aprRows.length ? aprRows.map(r => {
+        const isStd = r.is_standard || r.apr == null;
+        const rateTxt = isStd ? 'Std. Rate' : `${Number(r.apr).toFixed(2)}% APR`;
+        return `
+          <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid rgba(217,215,208,0.5);font-size:14px">
+            <span style="color:#606060">${r.term}mo</span>
+            <span class="mono" style="color:#1D1D1D;font-weight:600">${escapeHtml(rateTxt)}</span>
+          </div>`;
+      }).join('') : '<div style="font-size:13px;color:#9F9F9F;padding:8px 0">No published APR offers this month.</div>';
       const leaseList = leaseRows.length ? leaseRows.map(r => {
         const mfTxt = r.money_factor != null ? `MF ${r.money_factor}` : 'Std. MF';
         const resTxt = r.residual_pct != null ? `${r.residual_pct}% res` : '';
