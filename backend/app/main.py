@@ -281,6 +281,22 @@ async def lifespan(app: FastAPI):
         db.close()
     # Create output directory
     os.makedirs(settings.OUTPUT_DIR, exist_ok=True)
+    # Auto-rebuild the campaign-code matrix on startup so logic changes
+    # in code_matrix.py (new flag-detection, restricted-eligibility
+    # exclusions, base-code emission, etc.) self-heal on the next
+    # deploy without needing an admin to remember to click Rebuild.
+    # Wrapped in try/except so a transient rebuild failure doesn't
+    # block the app from starting — the existing /api/codes/rebuild
+    # button is still available as a manual fallback.
+    db = SessionLocal()
+    try:
+        from app.services.code_matrix import rebuild_matrix
+        result = rebuild_matrix(db, preview_only=False)
+        print(f"[startup] Matrix rebuilt: {len(result)} codes")
+    except Exception as e:
+        print(f"[startup] Matrix rebuild skipped: {e!r}")
+    finally:
+        db.close()
     yield
 
 
