@@ -2038,12 +2038,87 @@
 
         root.innerHTML = `
           <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:14px">
-            <div class="eyebrow">All offers — ${escapeHtml(period)}</div>
-            <span style="font-size:11px;color:#9F9F9F">Rates vary by trim, term, and credit tier. State-specific subvention may apply — see a full lookup for deal-specific results.</span>
+            <div class="eyebrow">National offers — ${escapeHtml(period)}</div>
+            <span style="font-size:11px;color:#9F9F9F">Rates vary by trim, term, and credit tier. State-specific subvention may apply — see below or run a full lookup for deal-specific results.</span>
           </div>
-          ${cards}`;
+          ${cards}
+          <div id="state-offers-mount" style="margin-top:24px"></div>`;
+        // State-specific subvention section — separate fetch so the
+        // national cards land instantly and the per-state expansion
+        // (one fetch, then a render per state) doesn't block them.
+        loadStateSpecificOffers();
       } catch (e) {
         root.innerHTML = `<div class="panel-empty" style="color:#CC0200">${escapeHtml(e.message || 'Failed to load')}</div>`;
+      }
+    }
+
+    // State-specific Santander offers — rendered as a collapsible
+    // section under the national cards. Each state gets its own
+    // expandable card with the configs that have subvented (state-
+    // beats-national) APR or lease rates. Re-uses the same row HTML
+    // builder as the national cards so the visual treatment matches.
+    async function loadStateSpecificOffers() {
+      const mount = document.getElementById('state-offers-mount');
+      if (!mount) return;
+      mount.innerHTML = '<div class="panel-loading" style="padding:18px 0">Loading state-specific offers…</div>';
+      try {
+        const r = await fetch('/api/lookup/state-offers');
+        if (!r.ok) throw new Error('Failed to load state offers (' + r.status + ')');
+        const data = await r.json();
+        const states = data.states || [];
+        if (!states.length) {
+          mount.innerHTML = '';
+          return;
+        }
+        const stateCards = states.map(s => {
+          const configBlocks = s.configs.map(c => {
+            const { aprList, leaseList } = _santanderRowsHtml(c);
+            return `
+              <div style="padding:14px 0;border-top:1px solid #E9E8E5">
+                <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+                  <div style="font-size:13px;font-weight:600;color:#1D1D1D;font-family:'Formula4x4','Arial Black',sans-serif;text-transform:uppercase;letter-spacing:0.04em">${escapeHtml(c.label)}</div>
+                  <span style="font-size:10px;color:#9F9F9F;font-family:'JetBrains Mono',monospace;letter-spacing:0.06em;text-transform:uppercase">${escapeHtml(s.state)} subvented</span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:24px">
+                  <div>
+                    <div class="eyebrow" style="margin-bottom:4px;color:#1D1D1D">Finance (Retail APR)</div>
+                    ${aprList}
+                  </div>
+                  <div>
+                    <div class="eyebrow" style="margin-bottom:4px;color:#1D1D1D">Lease</div>
+                    ${leaseList}
+                  </div>
+                </div>
+              </div>`;
+          }).join('');
+          // <details> gives a native disclosure widget — no JS state
+          // needed and the open/closed state is preserved across tab
+          // switches via the DOM tree.
+          return `
+            <details class="card" style="padding:16px 22px;margin-bottom:10px">
+              <summary style="cursor:pointer;display:flex;justify-content:space-between;align-items:center;gap:10px;list-style:none;outline:none">
+                <div>
+                  <h3 style="font-size:15px;color:#1D1D1D;margin:0;font-family:'Formula4x4','Arial Black',sans-serif;letter-spacing:0.02em;text-transform:uppercase">${escapeHtml(s.state_name)} <span style="color:#9F9F9F;font-weight:400">· ${escapeHtml(s.state)}</span></h3>
+                  <div style="font-size:11.5px;color:#606060;margin-top:2px">${s.configs.length} configuration${s.configs.length === 1 ? '' : 's'} with state-specific subvention</div>
+                </div>
+                <span style="font-size:12px;color:#FF4639;font-family:'JetBrains Mono',monospace">View ▾</span>
+              </summary>
+              ${configBlocks}
+            </details>`;
+        }).join('');
+        mount.innerHTML = `
+          <div style="border-top:2px solid #1D1D1D;padding-top:18px">
+            <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:12px;margin-bottom:12px">
+              <div>
+                <h2 style="font-size:18px;color:#1D1D1D;margin:0 0 4px;font-family:'Formula4x4','Arial Black',sans-serif;letter-spacing:0.02em;text-transform:uppercase">State-Specific Offers</h2>
+                <div style="font-size:12px;color:#606060">Subvention beats the national rate sheet in these states. Click a row to see the configs.</div>
+              </div>
+              <span class="eyebrow">${states.length} state${states.length === 1 ? '' : 's'}</span>
+            </div>
+            ${stateCards}
+          </div>`;
+      } catch (e) {
+        mount.innerHTML = `<div class="panel-empty" style="color:#CC0200;padding:18px 0">${escapeHtml(e.message || 'Failed to load state offers')}</div>`;
       }
     }
 

@@ -494,6 +494,107 @@ def list_states():
     return [{"value": s, "label": f"{s} - {STATE_NAMES[s]}"} for s in ALL_STATES]
 
 
+@router.get("/state-offers")
+def list_state_specific_offers():
+    """List Santander offers that have state-specific subvented rates,
+    grouped by state. Powers the State-Specific Offers section on the
+    Santander Offers tab — surfaces the configs (MY x body) where a
+    state file beats the national rate sheet, so dealers in those
+    states see their region-specific subvention without having to run
+    a full deal lookup.
+
+    For each state and each config that has at least one non-standard
+    state-specific rate, we return the best per-term APR / lease rows
+    via the same helper the Find tab uses (state wins over national,
+    standard rows ride along but are labeled in the UI)."""
+    import os
+    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+    from app.services.santander_rates import (
+        load_apr_rates, load_lease_rates, get_apr_for_config,
+        get_lease_for_config, NATIONAL_REGION,
+    )
+
+    apr_rows = load_apr_rates(base_dir)
+    lease_rows = load_lease_rates(base_dir)
+
+    # Pull the unique state codes that have at least one subvented
+    # (non-standard) row across either rate sheet. A state with only
+    # "Std." rows wouldn't surface anything new vs. national so it's
+    # excluded from this list.
+    def state_codes_with_offers(rows):
+        out = set()
+        for r in rows:
+            region = r.get("region")
+            if not region or region == NATIONAL_REGION:
+                continue
+            if r.get("is_standard"):
+                continue
+            out.add(region.upper())
+        return out
+
+    states_with_apr = state_codes_with_offers(apr_rows)
+    states_with_lease = state_codes_with_offers(lease_rows)
+    all_states = sorted(states_with_apr | states_with_lease)
+
+    # The configs we surface per state mirror the global Santander
+    # Offers cards: MY25/MY26 x SW/QM/Arcane Works. Tier 1 only — the
+    # public surface doesn't expose other tiers.
+    base_configs = [
+        ("MY25 Station Wagon", "MY25", "station_wagon"),
+        ("MY26 Station Wagon", "MY26", "station_wagon"),
+        ("MY25 Quartermaster", "MY25", "quartermaster"),
+        ("MY26 Quartermaster", "MY26", "quartermaster"),
+        ("MY25 Arcane Works",  "MY25", "arcane_works"),
+        ("MY26 Arcane Works",  "MY26", "arcane_works"),
+    ]
+
+    out = []
+    for st in all_states:
+        configs = []
+        for label, my, body in base_configs:
+            apr = get_apr_for_config(base_dir, my, body, tier=1, state=st)
+            lease = get_lease_for_config(base_dir, my, body, tier=1, state=st)
+            # Skip configs where the state file didn't actually beat
+            # national for ANY term — keeps each state card focused
+            # on what's actually state-specific.
+            has_state_apr = any(r.get("region") == st for r in apr)
+            has_state_lease = any(r.get("region") == st for r in lease)
+            if not (has_state_apr or has_state_lease):
+                continue
+            configs.append({
+                "label": label,
+                "model_year": my,
+                "body_style": body,
+                "apr": [
+                    {"term": r["term"], "apr": r["apr"], "trim": r.get("trim"),
+                     "is_standard": r.get("is_standard", False),
+                     "is_state": r.get("region") == st}
+                    for r in apr
+                ],
+                "lease": [
+                    {
+                        "term": r["term"],
+                        "money_factor": r["money_factor"],
+                        "money_factor_display": r.get("money_factor_display"),
+                        "is_standard": r.get("is_standard", False),
+                        "is_state": r.get("region") == st,
+                        "residual_pct": r["residual_pct"],
+                        "acq_fee": r.get("acq_fee"),
+                        "trim": r.get("trim"),
+                    }
+                    for r in lease
+                ],
+            })
+        if not configs:
+            continue
+        out.append({
+            "state": st,
+            "state_name": STATE_NAMES.get(st, st),
+            "configs": configs,
+        })
+    return {"states": out}
+
+
 @router.post("/quote/pdf")
 def generate_customer_quote_pdf(deal: dict = Body(...), detail: str = "standard"):
     """Render a customer-facing quote PDF from the wizard's current
