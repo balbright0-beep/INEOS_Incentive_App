@@ -2336,15 +2336,15 @@
           {step === 4 && lookup && (
             <div className="fade-in">
               <Card className="p-8 border-2 border-flare-red/20 mb-4 text-center">
-                {/* Always show the campaign code chip — even when total=0, lookup.code
-                    is the base code for the deal type (USCSWT/USASWT/USLSWT once the
-                    variant-swap clears loyalty/conquest flags from the empty selection),
-                    so the retailer always has a SAP code to enter. The sub-label tells
-                    them whether this is the auto-stack, an adjusted stack, or a
-                    base-code-only "customer not taking incentives" deal. */}
+                {/* Always show the campaign code chip — even when total=0. When
+                    nothing's selected we swap to the dedicated base code (USCSSZ
+                    etc.) so SAP records the no-incentive deal under the right
+                    code instead of the bundled-stack one. lookup.base_code is
+                    populated by lookup_incentive; falls back to lookup.code
+                    on older API responses. */}
                 <p className="text-xs uppercase tracking-wider text-silver-dust mb-2 font-mono">Campaign Code to Enter in SAP</p>
                 <div className="inline-block bg-onyx text-white px-8 py-4 rounded-lg mb-3">
-                  <span className="text-5xl font-bold tracking-widest font-mono">{lookup.code}</span>
+                  <span className="text-5xl font-bold tracking-widest font-mono">{(selection?.total === 0 && lookup.base_code) ? lookup.base_code : lookup.code}</span>
                 </div>
                 <p className={`text-3xl font-bold ${selection?.total === 0 ? 'text-silver-dust' : 'text-success'}`}>${Number(selection?.total || 0).toLocaleString()}</p>
                 <p className="text-xs text-silver-dust mt-1">

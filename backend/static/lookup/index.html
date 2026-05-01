@@ -1924,9 +1924,13 @@
         ];
       }
 
+      // Same base-vs-bundled swap as the on-screen chip — the PDF
+      // should ship the SAP code that actually matches the deal the
+      // customer is taking, not the auto-stack code at $0.
+      const quoteCode = (total === 0 && r.base_code) ? r.base_code : (r.code || '');
       const deal = {
         deal_type: dt,
-        code: r.code || '',
+        code: quoteCode,
         customer_name: customerName,
         vehicle: {
           vin: veh.vin || vd.vin || null,
@@ -2357,15 +2361,33 @@
           .join(' ').toLowerCase();
         return hay.includes(search);
       });
-      const layerCell = (layers) => (layers || []).map(l =>
-        `<div style="display:flex;justify-content:space-between;gap:10px;padding:1px 0"><span style="color:#606060">${escapeHtml(l.program_name)}</span><span class="mono" style="color:#1D1D1D">${fmtMoney(l.layer_amount)}</span></div>`
-      ).join('') || '<span style="color:#9F9F9F">\u2014</span>';
+      const layerCell = (c) => {
+        const isBase = (c.code || '').endsWith('Z');
+        if (isBase) {
+          return '<span style="font-size:11px;color:#9F9F9F;font-family:\'JetBrains Mono\',monospace;letter-spacing:0.06em;text-transform:uppercase">No incentives \u2014 base code for this deal type</span>';
+        }
+        const layers = c.layers || [];
+        if (!layers.length) return '<span style="color:#9F9F9F">\u2014</span>';
+        return layers.map(l =>
+          `<div style="display:flex;justify-content:space-between;gap:10px;padding:1px 0"><span style="color:#606060">${escapeHtml(l.program_name)}</span><span class="mono" style="color:#1D1D1D">${fmtMoney(l.layer_amount)}</span></div>`
+        ).join('');
+      };
+      // BASE pill on the code cell makes the no-incentive rows
+      // unmistakable when scanning the table \u2014 distinct from
+      // bundled-stack codes that happen to total $0.
+      const codeCell = (c) => {
+        const isBase = (c.code || '').endsWith('Z');
+        const badge = isBase
+          ? '<span style="display:inline-block;margin-left:6px;padding:1px 6px;background:#E9E8E5;color:#606060;font-size:9px;font-family:\'JetBrains Mono\',monospace;letter-spacing:0.08em;text-transform:uppercase;border-radius:3px;vertical-align:1px">Base</span>'
+          : '';
+        return `<b>${escapeHtml(c.code)}</b>${badge}`;
+      };
       const rows = filtered.map(c => `
         <tr>
-          <td class="mono"><b>${escapeHtml(c.code)}</b></td>
+          <td class="mono">${codeCell(c)}</td>
           <td>${escapeHtml((c.body_style || '').replace('_', ' '))}<div style="font-size:11px;color:#9F9F9F">${escapeHtml(c.model_year || '')}${c.trim ? ' \u00b7 ' + escapeHtml(c.trim) : ''}</div></td>
           <td>${escapeHtml((c.deal_type || '').toUpperCase())}</td>
-          <td style="min-width:240px">${layerCell(c.layers)}</td>
+          <td style="min-width:240px">${layerCell(c)}</td>
           <td class="num"><b>${fmtMoney(c.support_amount)}</b></td>
         </tr>`).join('');
       panel.innerHTML = `
