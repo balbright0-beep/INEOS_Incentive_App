@@ -99,6 +99,35 @@ def _flag_letter(loyalty: bool, conquest: bool) -> str:
     return ""
 
 
+# Program-name keywords that mark a program as restricted-eligibility
+# (only applies when the customer specifically qualifies — dealer
+# employee, friends/family/business partner, Costco affiliate, etc.).
+# These programs are excluded from the default matrix bundle so the
+# campaign code's default total reflects what every customer in the
+# config can actually take. They still appear as opt-in choices in
+# the chooser via _build_eligible_programs and contribute when the
+# user explicitly toggles them on.
+_RESTRICTED_ELIGIBILITY_KEYWORDS = (
+    "dealer employee",
+    "employee lease",
+    "friends",
+    "family",
+    "business partner",
+    "affiliate",
+    "costco",
+    "supplier",
+)
+
+
+def _is_restricted_eligibility(program) -> bool:
+    """Detect whether a program has restricted eligibility (dealer
+    employee, friends/family, etc.) by name. Used to exclude these
+    programs from the default matrix bundle so the headline campaign-
+    code total only reflects programs every customer can take."""
+    name = (getattr(program, "name", None) or "").lower()
+    return any(kw in name for kw in _RESTRICTED_ELIGIBILITY_KEYWORDS)
+
+
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
                          loyalty: bool, conquest: bool, special: str | None,
                          base: bool = False) -> str:
@@ -272,6 +301,16 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
             # 0-dollar layer to every matrix code and (b) double-count
             # when the lookup path then adds the real VIN amount.
             if prog.program_type == "vin_specific":
+                continue
+            # Restricted-eligibility programs (Dealer Employee, F&F,
+            # Costco, etc.) are opt-in by definition — most customers
+            # can't claim them. Bundling them into the default matrix
+            # code's stack would inflate the headline total and mislead
+            # SAP into recording programs the customer didn't actually
+            # take. They still surface as opt-in choices in the chooser
+            # via _build_eligible_programs, so the dealer can stack
+            # them when the customer qualifies.
+            if _is_restricted_eligibility(prog):
                 continue
             if not is_program_applicable(deal_type, prog.program_type, stacking):
                 continue
