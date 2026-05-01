@@ -1184,9 +1184,28 @@
       const _selectedRestricted = (eligible || []).find(p =>
         _selectedProgramIds.has(p.program_id) && r.restricted_codes && r.restricted_codes[p.program_id]
       );
+      // Determine flag state from currently-selected loyalty/conquest
+      // programs so the combo lookup picks USLSTM (L+E) over USLSTE
+      // (E only) when the customer takes both Loyalty AND Dealer
+      // Employee Lease.
+      const _flagKey = (() => {
+        let loy = false, con = false;
+        for (const p of (eligible || [])) {
+          if (!_selectedProgramIds.has(p.program_id)) continue;
+          if (p === _selectedRestricted) continue;
+          const n = (p.program_name || '').toLowerCase();
+          if (p.program_type === 'loyalty' || n.includes('loyalty')) loy = true;
+          else if (p.program_type === 'conquest' || n.includes('conquest')) con = true;
+        }
+        // Combo cap: 6-char codes don't fit L+C+E, so prefer L over C.
+        if (loy) return 'L';
+        if (con) return 'C';
+        return '';
+      })();
       let displayedCode;
       if (_selectedRestricted) {
-        displayedCode = r.restricted_codes[_selectedRestricted.program_id];
+        const codeMap = r.restricted_codes[_selectedRestricted.program_id] || {};
+        displayedCode = codeMap[_flagKey] || codeMap[''] || r.code;
       } else if (total === 0 && r.base_code) {
         displayedCode = r.base_code;
       } else {
@@ -1465,9 +1484,26 @@
       const _selectedRestricted4 = (eligible || []).find(p =>
         _selectedProgramIds.has(p.program_id) && r.restricted_codes && r.restricted_codes[p.program_id]
       );
+      // Determine flag state from currently-selected loyalty/conquest
+      // programs so combo lookup picks USLSTM (L+E) over USLSTE (E)
+      // when the customer takes both Loyalty AND Dealer Employee Lease.
+      const _flagKey4 = (() => {
+        let loy = false, con = false;
+        for (const p of (eligible || [])) {
+          if (!_selectedProgramIds.has(p.program_id)) continue;
+          if (p === _selectedRestricted4) continue;
+          const n = (p.program_name || '').toLowerCase();
+          if (p.program_type === 'loyalty' || n.includes('loyalty')) loy = true;
+          else if (p.program_type === 'conquest' || n.includes('conquest')) con = true;
+        }
+        if (loy) return 'L';
+        if (con) return 'C';
+        return '';
+      })();
       let displayedCode;
       if (_selectedRestricted4) {
-        displayedCode = r.restricted_codes[_selectedRestricted4.program_id];
+        const codeMap = r.restricted_codes[_selectedRestricted4.program_id] || {};
+        displayedCode = codeMap[_flagKey4] || codeMap[''] || r.code;
       } else if (total === 0 && r.base_code) {
         displayedCode = r.base_code;
       } else {
@@ -1966,9 +2002,23 @@
       const _selectedRestrictedQ = (sel.eligible || []).find(p =>
         _selectedProgramIds.has(p.program_id) && r.restricted_codes && r.restricted_codes[p.program_id]
       );
+      const _flagKeyQ = (() => {
+        let loy = false, con = false;
+        for (const p of (sel.eligible || [])) {
+          if (!_selectedProgramIds.has(p.program_id)) continue;
+          if (p === _selectedRestrictedQ) continue;
+          const n = (p.program_name || '').toLowerCase();
+          if (p.program_type === 'loyalty' || n.includes('loyalty')) loy = true;
+          else if (p.program_type === 'conquest' || n.includes('conquest')) con = true;
+        }
+        if (loy) return 'L';
+        if (con) return 'C';
+        return '';
+      })();
       let quoteCode;
       if (_selectedRestrictedQ) {
-        quoteCode = r.restricted_codes[_selectedRestrictedQ.program_id];
+        const codeMap = r.restricted_codes[_selectedRestrictedQ.program_id] || {};
+        quoteCode = codeMap[_flagKeyQ] || codeMap[''] || (r.code || '');
       } else if (total === 0 && r.base_code) {
         quoteCode = r.base_code;
       } else {

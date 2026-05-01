@@ -158,6 +158,37 @@ def _eligibility_letter(program) -> str | None:
     return None
 
 
+# Combo letters for (flag x eligibility) pairings. The 6-char SAP
+# cap forces single-letter encoding even for combinations, so each
+# common pair gets a dedicated letter. Keyed (loyalty, conquest,
+# elig_letter); only loyalty XOR conquest combos are supported (the
+# loyalty+conquest+eligibility triple is too rare to justify a
+# unique letter and would conflict with existing positional codes).
+_COMBO_LETTER = {
+    # Loyalty + Employee → M ("Mixed Loyalty+Employee")
+    (True, False, "E"): "M",
+    # Conquest + Employee → N
+    (False, True, "E"): "N",
+    # Loyalty + F&F → G
+    (True, False, "F"): "G",
+    # Conquest + F&F → H
+    (False, True, "F"): "H",
+}
+
+
+def _combo_letter(loyalty: bool, conquest: bool, elig_letter: str | None) -> str | None:
+    """Combine loyalty/conquest flag state with an eligibility letter
+    into a single suffix. Returns None when the combo isn't supported
+    (matrix builder treats that as "skip this variant" rather than
+    overflowing the code length)."""
+    if not elig_letter:
+        # No eligibility: fall back to the regular flag letter.
+        return _flag_letter(loyalty, conquest) or None
+    if not (loyalty or conquest):
+        return elig_letter  # eligibility-only, no flag
+    return _COMBO_LETTER.get((bool(loyalty), bool(conquest), elig_letter))
+
+
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
                          loyalty: bool, conquest: bool, special: str | None,
                          base: bool = False, eligibility: str | None = None) -> str:
@@ -536,66 +567,122 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
             "expiration_date": None,
         })
 
-    # ── Per-restricted-eligibility variant codes ──
+    # ── Per-restricted-eligibility variant codes (incl. combos) ──
     #
     # When a customer opts into a restricted-eligibility program
     # (Dealer Employee Lease, Friends & Family, etc.), the campaign
     # code needs a distinct suffix so SAP records the deal under that
-    # specific opt-in bucket — otherwise toggling DEL on top of
-    # Conquest leaves the chip on USLSTC and SAP loses the dealer-
-    # employee signal. Emit one code per (body x MY x deal_type x
-    # eligibility-letter) where the program qualifies.
+    # specific opt-in bucket. Variants emitted:
+    #   USLSTE = lease + DEL only           (eligibility=E)
+    #   USLSTM = lease + DEL + Loyalty      (combo L+E)
+    #   USLSTN = lease + DEL + Conquest     (combo C+E)
+    #   USLSTF = lease + F&F only           (eligibility=F)
+    #   USLSTG = lease + F&F + Loyalty      (combo L+F)
+    #   USLSTH = lease + F&F + Conquest     (combo C+F)
+    # Each variant carries the right layer set (just the restricted
+    # program; or +Loyalty / +Conquest from the active programs that
+    # match by name or type) so the headline total reflects the
+    # actual stack the customer would take.
     elig_emitted: set[str] = set()
-    for config in configs:
-        deal_type = config["finance_type"]
-        if deal_type == "cvp":
-            continue
-        # Variants only on the no-flag base config — combinations
-        # with loyalty/conquest don't fit the 6-char SAP cap.
-        if config["loyalty"] or config["conquest"] or config.get("special_edition"):
-            continue
-        for prog in active_programs:
-            if not _is_restricted_eligibility(prog):
-                continue
-            letter = _eligibility_letter(prog)
-            if not letter:
-                continue
-            if not is_program_applicable(deal_type, prog.program_type, stacking):
-                continue
-            if not program_matches_config(prog, config):
-                continue
-            variant_code = generate_code_string(
-                config["body_style"], config["model_year"], deal_type,
-                False, False, None, eligibility=letter,
-            )
-            key = (variant_code, prog.id)
-            if key in elig_emitted:
-                continue
-            elig_emitted.add(key)
-            body_label = "Arcane Works" if config["body_style"] == "arcane_works" else config["body_style"].replace("_", " ").title()
-            label = f"{config['model_year']} {body_label} {deal_type.upper()} + {prog.name}"
-            amount = float(prog.per_unit_amount or 0)
-            new_matrix.append({
-                "code": variant_code,
-                "label": label,
-                "model_year": config["model_year"],
-                "body_style": config["body_style"],
-                "deal_type": deal_type,
-                "loyalty_flag": False,
-                "conquest_flag": False,
-                "special_flag": None,
-                "current_amount": None,
-                "new_amount": amount,
-                "change_type": "new",
-                "layers": [{
-                    "program_id": prog.id,
-                    "program_name": prog.name,
-                    "program_type": prog.program_type,
-                    "amount": amount,
-                }],
-                "effective_date": None,
-                "expiration_date": None,
-            })
+    flag_states = [
+        (False, False),  # eligibility-only
+        (True,  False),  # + loyalty
+        (False, True),   # + conquest
+    ]
+    body_styles_set = {c["body_style"] for c in configs}
+    model_years_set = {c["model_year"] for c in configs}
+    deal_types_set = {c["finance_type"] for c in configs if c["finance_type"] != "cvp"}
+
+    for body_style in body_styles_set:
+        for my in model_years_set:
+            for deal_type in deal_types_set:
+                base_cfg = {
+                    "body_style": body_style, "model_year": my,
+                    "finance_type": deal_type, "trim": None,
+                    "loyalty": False, "conquest": False, "special_edition": None,
+                }
+                for prog in active_programs:
+                    if not _is_restricted_eligibility(prog):
+                        continue
+                    elig_letter = _eligibility_letter(prog)
+                    if not elig_letter:
+                        continue
+                    if not is_program_applicable(deal_type, prog.program_type, stacking):
+                        continue
+                    if not program_matches_config(prog, base_cfg):
+                        continue
+                    for loy, con in flag_states:
+                        suffix = _combo_letter(loy, con, elig_letter)
+                        if not suffix:
+                            continue
+                        # Build the layer set: the restricted program,
+                        # plus any loyalty/conquest programs that match
+                        # this config (by type or name fallback).
+                        layers_for_variant = [{
+                            "program_id": prog.id,
+                            "program_name": prog.name,
+                            "program_type": prog.program_type,
+                            "amount": float(prog.per_unit_amount or 0),
+                        }]
+                        if loy or con:
+                            for p in active_programs:
+                                if p.id == prog.id:
+                                    continue
+                                if _is_restricted_eligibility(p):
+                                    continue
+                                p_name_lc = (p.name or "").lower()
+                                p_is_loyalty = p.program_type == "loyalty" or "loyalty" in p_name_lc
+                                p_is_conquest = p.program_type == "conquest" or "conquest" in p_name_lc
+                                if loy and not p_is_loyalty:
+                                    continue
+                                if con and not p_is_conquest:
+                                    continue
+                                if not is_program_applicable(deal_type, p.program_type, stacking):
+                                    continue
+                                cfg_for_match = dict(base_cfg)
+                                if loy: cfg_for_match["loyalty"] = True
+                                if con: cfg_for_match["conquest"] = True
+                                if not program_matches_config(p, cfg_for_match):
+                                    continue
+                                layers_for_variant.append({
+                                    "program_id": p.id,
+                                    "program_name": p.name,
+                                    "program_type": p.program_type,
+                                    "amount": float(p.per_unit_amount or 0),
+                                })
+                        # Skip combo variants where the flag program
+                        # isn't actually present — emitting a combo
+                        # code without the partner program would lie
+                        # about the stack.
+                        if (loy or con) and len(layers_for_variant) < 2:
+                            continue
+                        variant_code = f"US{_DT_LETTER.get(deal_type, 'C')}{_BODY_LETTER.get(body_style, 'S')}{MY_TO_LETTER.get(my, '')}{suffix}"[:MAX_CODE_LEN]
+                        key = (variant_code, prog.id, loy, con)
+                        if key in elig_emitted:
+                            continue
+                        elig_emitted.add(key)
+                        body_label = "Arcane Works" if body_style == "arcane_works" else body_style.replace("_", " ").title()
+                        combo_label = ""
+                        if loy: combo_label += " + Loyalty"
+                        if con: combo_label += " + Conquest"
+                        label = f"{my} {body_label} {deal_type.upper()} + {prog.name}{combo_label}"
+                        total = sum(l["amount"] for l in layers_for_variant)
+                        new_matrix.append({
+                            "code": variant_code,
+                            "label": label,
+                            "model_year": my,
+                            "body_style": body_style,
+                            "deal_type": deal_type,
+                            "loyalty_flag": loy,
+                            "conquest_flag": con,
+                            "special_flag": None,
+                            "current_amount": None,
+                            "new_amount": total,
+                            "change_type": "new",
+                            "layers": layers_for_variant,
+                            "effective_date": None,
+                            "expiration_date": None,
+                        })
 
     if preview_only:
         return new_matrix

@@ -193,35 +193,54 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
         base_code_row = base_code_row.filter(CampaignCode.model_year == req.model_year)
     base_code_row = base_code_row.first()
 
-    # Per-restricted-eligibility variant codes. The matrix builder
-    # emits a one-layer row per (body x MY x deal_type) where each
-    # restricted program qualifies. Frontend uses this to swap the
-    # chip to USLSTE / USLSTF / etc. when the user toggles DEL or F&F
-    # in the chooser. Map keyed on program_id so the frontend's
-    # selection-by-id maps cleanly to a code.
-    restricted_codes: dict[str, str] = {}
+    # Per-restricted-eligibility variant codes. Nested by program_id
+    # then flag state — "" = no flag, "L" = +Loyalty, "C" = +Conquest.
+    # Matrix builder emits combo variants (USLSTM = L+E, USLSTN = C+E,
+    # USLSTG = L+F, USLSTH = C+F) so the right code surfaces when the
+    # user toggles a restricted program with or without loyalty /
+    # conquest also selected. Identifying which row is which combo
+    # is done by reading the row's loyalty_flag/conquest_flag and the
+    # restricted program ID (from the layer that ISN'T loyalty/conquest).
+    restricted_codes: dict[str, dict[str, str]] = {}
     elig_rows = (
-        db.query(CampaignCode, CampaignCodeLayer)
-        .join(CampaignCodeLayer, CampaignCode.id == CampaignCodeLayer.campaign_code_id)
+        db.query(CampaignCode)
         .filter(
             CampaignCode.active == True,
             CampaignCode.body_style == req.body_style,
             CampaignCode.deal_type == deal_type,
-            CampaignCode.loyalty_flag == False,  # noqa: E712
-            CampaignCode.conquest_flag == False,  # noqa: E712
             (CampaignCode.special_flag == None) | (CampaignCode.special_flag == ""),  # noqa: E711
             ~CampaignCode.code.like("%Z"),  # exclude base codes
-            ~CampaignCode.code.like("%L"),  # exclude loyalty
-            ~CampaignCode.code.like("%C"),  # exclude conquest
-            ~CampaignCode.code.like("%B"),  # exclude both
+            # Match any code ending in an eligibility / combo letter.
+            CampaignCode.code.op("~")(r"[EFMNGHPKR]$") if "postgres" in str(db.bind.url).lower() else CampaignCode.code.like("%E") | CampaignCode.code.like("%F") | CampaignCode.code.like("%M") | CampaignCode.code.like("%N") | CampaignCode.code.like("%G") | CampaignCode.code.like("%H"),
         )
     )
     if req.model_year:
         elig_rows = elig_rows.filter(CampaignCode.model_year == req.model_year)
-    for cc, layer in elig_rows.all():
-        # Variant codes have exactly one layer (the restricted
-        # program). Use that program_id as the key.
-        restricted_codes[layer.program_id] = cc.code
+    for cc in elig_rows.all():
+        layers_for_code = (
+            db.query(CampaignCodeLayer, Program)
+            .join(Program, CampaignCodeLayer.program_id == Program.id)
+            .filter(CampaignCodeLayer.campaign_code_id == cc.id)
+            .all()
+        )
+        # Find the restricted-eligibility program ID — the variant is
+        # keyed on it. Skip if no layer is restricted (shouldn't happen
+        # for E/F/M/N/G/H suffixes, but be defensive).
+        restricted_pid = None
+        for _, prog in layers_for_code:
+            name_lc = (prog.name or "").lower()
+            if any(kw in name_lc for kw, _ in (
+                ("dealer employee", None), ("employee lease", None),
+                ("friends", None), ("family", None),
+                ("business partner", None), ("affiliate", None),
+                ("costco", None), ("supplier", None),
+            )):
+                restricted_pid = prog.id
+                break
+        if not restricted_pid:
+            continue
+        flag_key = "L" if cc.loyalty_flag else ("C" if cc.conquest_flag else "")
+        restricted_codes.setdefault(restricted_pid, {})[flag_key] = cc.code
 
     return LookupResponse(
         code=code.code,
