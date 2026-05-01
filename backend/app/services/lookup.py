@@ -193,9 +193,40 @@ def lookup_incentive(db: Session, req: LookupRequest, public_only: bool = False)
         base_code_row = base_code_row.filter(CampaignCode.model_year == req.model_year)
     base_code_row = base_code_row.first()
 
+    # Per-restricted-eligibility variant codes. The matrix builder
+    # emits a one-layer row per (body x MY x deal_type) where each
+    # restricted program qualifies. Frontend uses this to swap the
+    # chip to USLSTE / USLSTF / etc. when the user toggles DEL or F&F
+    # in the chooser. Map keyed on program_id so the frontend's
+    # selection-by-id maps cleanly to a code.
+    restricted_codes: dict[str, str] = {}
+    elig_rows = (
+        db.query(CampaignCode, CampaignCodeLayer)
+        .join(CampaignCodeLayer, CampaignCode.id == CampaignCodeLayer.campaign_code_id)
+        .filter(
+            CampaignCode.active == True,
+            CampaignCode.body_style == req.body_style,
+            CampaignCode.deal_type == deal_type,
+            CampaignCode.loyalty_flag == False,  # noqa: E712
+            CampaignCode.conquest_flag == False,  # noqa: E712
+            (CampaignCode.special_flag == None) | (CampaignCode.special_flag == ""),  # noqa: E711
+            ~CampaignCode.code.like("%Z"),  # exclude base codes
+            ~CampaignCode.code.like("%L"),  # exclude loyalty
+            ~CampaignCode.code.like("%C"),  # exclude conquest
+            ~CampaignCode.code.like("%B"),  # exclude both
+        )
+    )
+    if req.model_year:
+        elig_rows = elig_rows.filter(CampaignCode.model_year == req.model_year)
+    for cc, layer in elig_rows.all():
+        # Variant codes have exactly one layer (the restricted
+        # program). Use that program_id as the key.
+        restricted_codes[layer.program_id] = cc.code
+
     return LookupResponse(
         code=code.code,
         base_code=base_code_row.code if base_code_row else None,
+        restricted_codes=restricted_codes,
         total_support_amount=total_amount,
         label=code.label or "",
         layers=layers,

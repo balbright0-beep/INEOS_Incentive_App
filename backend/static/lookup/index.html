@@ -1176,7 +1176,22 @@
       // code instead of the bundled-stack one. Falls back to r.code
       // if the matrix doesn't have a base row for this combo (older
       // matrix builds didn't emit them).
-      const displayedCode = (total === 0 && r.base_code) ? r.base_code : r.code;
+      // Restricted-eligibility programs (Dealer Employee Lease,
+      // Friends & Family, etc.) get their own variant code so SAP
+      // knows which opt-in bucket the deal belongs to. r.restricted_
+      // codes maps program_id -> code; we pick the first selected
+      // restricted program (combinations don't fit the 6-char cap).
+      const _selectedRestricted = (eligible || []).find(p =>
+        _selectedProgramIds.has(p.program_id) && r.restricted_codes && r.restricted_codes[p.program_id]
+      );
+      let displayedCode;
+      if (_selectedRestricted) {
+        displayedCode = r.restricted_codes[_selectedRestricted.program_id];
+      } else if (total === 0 && r.base_code) {
+        displayedCode = r.base_code;
+      } else {
+        displayedCode = r.code;
+      }
       const codeBlock = showNoIncentiveChip
         ? `<div style="display:inline-block;background:#9F9F9F;color:#fff;padding:14px 28px;border-radius:6px;margin-bottom:14px">
              <span style="font-family:'JetBrains Mono',monospace;font-size:18px;letter-spacing:0.08em;font-weight:600">NO INCENTIVE</span>
@@ -1441,10 +1456,23 @@
       // Always show the campaign code chip \u2014 even when total=0. When
       // there are no incentives selected the chip swaps to the
       // dedicated base code (USCSSZ etc.) so SAP records the deal
-      // under the right campaign code. r.base_code is supplied by
-      // lookup_incentive; if it's missing (older matrix without base
-      // rows), fall back to r.code so the chip still has something.
-      const displayedCode = (total === 0 && r.base_code) ? r.base_code : r.code;
+      // under the right campaign code. When the user has opted into
+      // a restricted-eligibility program (Dealer Employee Lease,
+      // F&F, etc.), the chip swaps to that program's variant code
+      // (USLSTE, USLSTF) instead. r.restricted_codes maps
+      // program_id -> code; we pick the first selected restricted
+      // program since 6-char SAP cap doesn't fit combos.
+      const _selectedRestricted4 = (eligible || []).find(p =>
+        _selectedProgramIds.has(p.program_id) && r.restricted_codes && r.restricted_codes[p.program_id]
+      );
+      let displayedCode;
+      if (_selectedRestricted4) {
+        displayedCode = r.restricted_codes[_selectedRestricted4.program_id];
+      } else if (total === 0 && r.base_code) {
+        displayedCode = r.base_code;
+      } else {
+        displayedCode = r.code;
+      }
       const subLabel = total === 0
         ? (noEligible
             ? 'Base code for this deal type \u2014 no incentive programs apply'
@@ -1931,10 +1959,21 @@
         ];
       }
 
-      // Same base-vs-bundled swap as the on-screen chip — the PDF
-      // should ship the SAP code that actually matches the deal the
-      // customer is taking, not the auto-stack code at $0.
-      const quoteCode = (total === 0 && r.base_code) ? r.base_code : (r.code || '');
+      // Same swap as the on-screen chip — the PDF should ship the
+      // SAP code that actually matches the deal the customer is
+      // taking, including restricted-eligibility variants (USLSTE
+      // for Dealer Employee Lease, etc).
+      const _selectedRestrictedQ = (sel.eligible || []).find(p =>
+        _selectedProgramIds.has(p.program_id) && r.restricted_codes && r.restricted_codes[p.program_id]
+      );
+      let quoteCode;
+      if (_selectedRestrictedQ) {
+        quoteCode = r.restricted_codes[_selectedRestrictedQ.program_id];
+      } else if (total === 0 && r.base_code) {
+        quoteCode = r.base_code;
+      } else {
+        quoteCode = r.code || '';
+      }
       const deal = {
         deal_type: dt,
         code: quoteCode,

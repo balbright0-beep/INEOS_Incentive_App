@@ -128,9 +128,39 @@ def _is_restricted_eligibility(program) -> bool:
     return any(kw in name for kw in _RESTRICTED_ELIGIBILITY_KEYWORDS)
 
 
+# When a customer opts into a restricted-eligibility program (Dealer
+# Employee Lease, Friends & Family, etc.), the campaign code needs a
+# distinct suffix so SAP records the deal under the right code rather
+# than the no-restriction bundled-stack one. Single-letter suffixes
+# fit the 6-char SAP cap and stay unambiguous against the L/C/B
+# loyalty/conquest flag positions.
+_ELIGIBILITY_LETTER = (
+    ("dealer employee", "E"),  # E for Employee
+    ("employee lease",  "E"),
+    ("friends",         "F"),  # F for Family/Friends
+    ("family",          "F"),
+    ("business partner","P"),  # P for Partner
+    ("affiliate",       "K"),  # K for Costco/Affiliate (C is taken)
+    ("costco",          "K"),
+    ("supplier",        "R"),  # R for suppliER
+)
+
+
+def _eligibility_letter(program) -> str | None:
+    """Return the single-letter code suffix for a restricted-eligibility
+    program, or None if the program isn't restricted. Used by the matrix
+    builder to emit per-program variant codes (USLSTE for Dealer
+    Employee Lease on MY26 SW, etc.)."""
+    name = (getattr(program, "name", None) or "").lower()
+    for keyword, letter in _ELIGIBILITY_LETTER:
+        if keyword in name:
+            return letter
+    return None
+
+
 def generate_code_string(body_style: str, model_year: str, deal_type: str,
                          loyalty: bool, conquest: bool, special: str | None,
-                         base: bool = False) -> str:
+                         base: bool = False, eligibility: str | None = None) -> str:
     """Generate the 6-char-max SAP campaign code for a deal config.
 
     `special` is no longer used to vary the code string — Arcane Works
@@ -154,6 +184,15 @@ def generate_code_string(body_style: str, model_year: str, deal_type: str,
         # Base codes never carry loyalty/conquest flags — they
         # represent the "no incentives selected" baseline, period.
         return f"US{dt_letter}{body_letter}{my_letter}Z"[:MAX_CODE_LEN]
+
+    if eligibility:
+        # Restricted-eligibility variant: customer is opting in to a
+        # specific restricted program (dealer employee, F&F, etc.),
+        # which gets its own code so SAP can record the right program
+        # bucket. Replaces the L/C/B flag — combinations don't fit
+        # the 6-char cap, so the eligibility letter wins as the more
+        # specific identifier.
+        return f"US{dt_letter}{body_letter}{my_letter}{eligibility}"[:MAX_CODE_LEN]
 
     # CVP and Demo never carry loyalty/conquest flags — they're
     # standalone retail channels by convention. Skip the flag suffix
@@ -496,6 +535,67 @@ def rebuild_matrix(db: Session, preview_only: bool = False) -> list[dict]:
             "effective_date": None,
             "expiration_date": None,
         })
+
+    # ── Per-restricted-eligibility variant codes ──
+    #
+    # When a customer opts into a restricted-eligibility program
+    # (Dealer Employee Lease, Friends & Family, etc.), the campaign
+    # code needs a distinct suffix so SAP records the deal under that
+    # specific opt-in bucket — otherwise toggling DEL on top of
+    # Conquest leaves the chip on USLSTC and SAP loses the dealer-
+    # employee signal. Emit one code per (body x MY x deal_type x
+    # eligibility-letter) where the program qualifies.
+    elig_emitted: set[str] = set()
+    for config in configs:
+        deal_type = config["finance_type"]
+        if deal_type == "cvp":
+            continue
+        # Variants only on the no-flag base config — combinations
+        # with loyalty/conquest don't fit the 6-char SAP cap.
+        if config["loyalty"] or config["conquest"] or config.get("special_edition"):
+            continue
+        for prog in active_programs:
+            if not _is_restricted_eligibility(prog):
+                continue
+            letter = _eligibility_letter(prog)
+            if not letter:
+                continue
+            if not is_program_applicable(deal_type, prog.program_type, stacking):
+                continue
+            if not program_matches_config(prog, config):
+                continue
+            variant_code = generate_code_string(
+                config["body_style"], config["model_year"], deal_type,
+                False, False, None, eligibility=letter,
+            )
+            key = (variant_code, prog.id)
+            if key in elig_emitted:
+                continue
+            elig_emitted.add(key)
+            body_label = "Arcane Works" if config["body_style"] == "arcane_works" else config["body_style"].replace("_", " ").title()
+            label = f"{config['model_year']} {body_label} {deal_type.upper()} + {prog.name}"
+            amount = float(prog.per_unit_amount or 0)
+            new_matrix.append({
+                "code": variant_code,
+                "label": label,
+                "model_year": config["model_year"],
+                "body_style": config["body_style"],
+                "deal_type": deal_type,
+                "loyalty_flag": False,
+                "conquest_flag": False,
+                "special_flag": None,
+                "current_amount": None,
+                "new_amount": amount,
+                "change_type": "new",
+                "layers": [{
+                    "program_id": prog.id,
+                    "program_name": prog.name,
+                    "program_type": prog.program_type,
+                    "amount": amount,
+                }],
+                "effective_date": None,
+                "expiration_date": None,
+            })
 
     if preview_only:
         return new_matrix

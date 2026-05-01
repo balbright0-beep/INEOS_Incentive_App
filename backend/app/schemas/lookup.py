@@ -52,6 +52,13 @@ class LookupResponse(BaseModel):
     # only if a base row is missing from the matrix (treat as a
     # fallback to `code`).
     base_code: Optional[str] = None
+    # Per-restricted-eligibility-program code variants. Map of
+    # program_id -> the code variant the customer should use when
+    # opting into that program (Dealer Employee Lease, Friends &
+    # Family, etc). Frontend swaps to this when the user toggles
+    # one of these programs in the chooser so SAP records the deal
+    # under the right opt-in code instead of the bundled-stack one.
+    restricted_codes: dict[str, str] = {}
     total_support_amount: float
     label: str
     layers: list[IncentiveLayer]
